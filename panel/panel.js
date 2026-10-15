@@ -22,6 +22,8 @@ const runner = {
   depth: 10,
   runId: null,
   pollTimer: null,
+  base: null,          // frozen copy of the workflow this batch runs against
+  baseLockedAt: null,
 };
 
 /* ------------------------------------------------------------------ */
@@ -239,6 +241,7 @@ async function loadWorkflow(force) {
     state.workflow = data.workflow;
     state.workflowAge = data.age;
     populateNodePickers();
+    renderWorkflowLock();
   } catch (error) {
     /* transient */
   }
@@ -309,8 +312,10 @@ async function parsedItems(ids) {
 }
 
 function buildPrompt(entry, index) {
-  // Deep copy so the submitted graph never shares structure with the base one.
-  const prompt = JSON.parse(JSON.stringify(state.workflow));
+  // The batch runs against a frozen copy of the workflow, so switching the
+  // canvas mid-run cannot change the graph halfway through.
+  const base = runner.base || state.workflow;
+  const prompt = JSON.parse(JSON.stringify(base));
   const positiveId = $("t-positive").value;
   const negativeId = $("t-negative").value;
   const saveId = $("t-save").value;
@@ -322,6 +327,39 @@ function buildPrompt(entry, index) {
     prompt[saveId].inputs.filename_prefix = `${prefix}/${currentRunId()}/${entry.name}_${String(index).padStart(4, "0")}`;
   }
   return prompt;
+}
+
+function lockWorkflow() {
+  if (!state.workflow) return false;
+  runner.base = JSON.parse(JSON.stringify(state.workflow));
+  runner.baseLockedAt = new Date();
+  renderWorkflowLock();
+  return true;
+}
+
+function renderWorkflowLock() {
+  const el = $("t-base");
+  if (!el) return;
+
+  if (!runner.base) {
+    el.textContent = "基础工作流：未锁定（开始执行时自动锁定当前画布）";
+    return;
+  }
+
+  const drifted =
+    !runner.running && state.workflow &&
+    JSON.stringify(state.workflow) !== JSON.stringify(runner.base);
+
+  if (drifted) {
+    el.textContent = "⚠ 画布已改动，锁定版本仍是上一次那份（下次开始执行时会自动重新锁定）";
+    el.className = "muted warn";
+    return;
+  }
+
+  const nodes = Object.keys(runner.base).length;
+  const at = runner.baseLockedAt.toLocaleTimeString();
+  el.className = "muted";
+  el.textContent = `基础工作流：已锁定 ${nodes} 个节点 @ ${at}${runner.running ? "（本批固定使用）" : ""}`;
 }
 
 async function enqueueSelected() {
@@ -344,6 +382,9 @@ function start() {
   if (!state.workflow) { setStatus("还没有工作流，请先在 ComfyUI 里打开/编辑工作流"); return; }
   if (!$("t-positive").value) { setStatus("请选择正向 CLIPTextEncode 节点"); return; }
 
+  // Freeze the current canvas workflow for this whole batch.
+  lockWorkflow();
+
   runner.running = true;
   $("run-state").textContent = "运行中";
   pump();
@@ -355,6 +396,7 @@ function stop() {
   $("run-state").textContent = "已停止";
   clearInterval(runner.pollTimer);
   updateCounts();
+  renderWorkflowLock();
   log("已停止追加，进行中的任务会继续跑完");
 }
 
@@ -506,6 +548,14 @@ function init() {
   $("btn-clear-queue").addEventListener("click", () => {
     runner.pending = [];
     updateCounts();
+  });
+  $("btn-relock").addEventListener("click", () => {
+    if (lockWorkflow()) {
+      renderWorkflowLock();
+      setStatus("已重新锁定当前画布工作流");
+    } else {
+      setStatus("还没有可锁定的工作流");
+    }
   });
 
   const observer = new IntersectionObserver((entries) => {

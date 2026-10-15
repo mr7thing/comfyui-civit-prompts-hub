@@ -43,6 +43,7 @@ body {
 }
 .pill.strong { color: var(--text); border-color: var(--accent); }
 .muted { color: var(--muted); font-size: 12px; }
+.muted.warn { color: #e0b45e; }
 
 main {
   display: grid;
