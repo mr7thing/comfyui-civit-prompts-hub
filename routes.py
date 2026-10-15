@@ -84,6 +84,36 @@ async def get_base_models(request):
     )
 
 
+async def get_models(request):
+    """Model name -> modelId, so nobody has to type raw ids."""
+    query = request.query.get("query", "")
+    token = request.query.get("token") or config.get_token()
+    async with civitai.new_session() as session:
+        try:
+            models = await civitai.search_models(
+                session, query, token=token, proxy=config.get_proxy()
+            )
+        except civitai.CivitaiError as exc:
+            return _json_error(str(exc), exc.status or 502)
+    return web.json_response({"models": models})
+
+
+async def get_model_versions(request):
+    """Versions of one model, fetched on demand."""
+    raw = request.match_info.get("model_id", "")
+    if not raw.isdigit():
+        return _json_error("model id 必须是数字", 400)
+
+    async with civitai.new_session() as session:
+        try:
+            versions = await civitai.model_versions(
+                session, int(raw), token=config.get_token(), proxy=config.get_proxy()
+            )
+        except civitai.CivitaiError as exc:
+            return _json_error(str(exc), exc.status or 502)
+    return web.json_response({"versions": versions})
+
+
 async def post_images(request):
     body = await _body(request)
     filters = body.get("filters") or {}
@@ -206,6 +236,8 @@ def register():
     routes.get("/cph/config")(get_config)
     routes.post("/cph/config")(post_config)
     routes.get("/cph/base-models")(get_base_models)
+    routes.get("/cph/models")(get_models)
+    routes.get("/cph/models/{model_id}/versions")(get_model_versions)
     routes.post("/cph/images")(post_images)
     routes.post("/cph/workflow")(post_workflow)
     routes.get("/cph/workflow")(get_workflow)

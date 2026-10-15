@@ -247,6 +247,71 @@ def new_session():
     return aiohttp.ClientSession(timeout=timeout, raise_for_status=False)
 
 
+async def search_models(session, query, token=None, proxy=None, limit=20):
+    """Look up models by name. Returns simplified records for the panel."""
+    query = (query or "").strip()
+    if not query:
+        return []
+
+    async with session.get(
+        f"{API_ROOT}/models",
+        params={"query": query, "limit": max(1, min(50, int(limit or 20)))},
+        headers=_headers(token),
+        proxy=proxy,
+    ) as resp:
+        if resp.status == 200:
+            body = await resp.json()
+            return [
+                {
+                    "id": item.get("id"),
+                    "name": item.get("name"),
+                    "type": item.get("type"),
+                    "nsfwLevel": item.get("nsfwLevel"),
+                }
+                for item in body.get("items") or []
+            ]
+
+        if resp.status == 503:
+            raise CivitaiError("Civitai is temporarily overloaded", 503)
+
+        payload = await resp.json(content_type=None)
+        raise CivitaiError(_error_message(payload) or f"HTTP {resp.status}", resp.status, payload)
+
+
+async def model_versions(session, model_id, token=None, proxy=None):
+    """Versions of one model. The list endpoint does not embed them, so this
+    is fetched on demand rather than for every search hit."""
+    async with session.get(
+        f"{API_ROOT}/models/{int(model_id)}",
+        headers=_headers(token),
+        proxy=proxy,
+    ) as resp:
+        if resp.status == 200:
+            body = await resp.json()
+            # the detail endpoint calls this field modelVersions, not versions
+            return [
+                {
+                    "id": version.get("id"),
+                    "name": version.get("name"),
+                    "baseModel": version.get("baseModel"),
+                    "file": _primary_file(version),
+                }
+                for version in body.get("modelVersions") or []
+            ]
+
+        payload = await resp.json(content_type=None)
+        raise CivitaiError(_error_message(payload) or f"HTTP {resp.status}", resp.status, payload)
+
+
+def _primary_file(version):
+    files = version.get("files") or []
+    for entry in files:
+        if entry.get("primary"):
+            return entry.get("name")
+    return files[0].get("name") if files else None
+
+
+
 async def download(session, url, proxy=None, max_bytes=64 * 1024 * 1024):
     """Fetch an image body, refusing anything larger than ``max_bytes``."""
     async with session.get(url, proxy=proxy, allow_redirects=True) as resp:

@@ -101,6 +101,28 @@ select[multiple] {
 }
 .grid-form label select[multiple] { margin-top: 3px; }
 
+.m-list {
+  max-height: 200px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 4px;
+  margin-top: 6px;
+}
+.m-list:empty { display: none; }
+
+.m-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 6px;
+  border-radius: 3px;
+}
+.m-item:hover { background: #23272e; }
+.m-name { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-name:hover { color: var(--accent); }
+.m-tag { color: var(--muted); font-size: 11px; white-space: nowrap; }
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));

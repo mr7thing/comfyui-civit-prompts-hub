@@ -242,6 +242,104 @@ function selectedItems() {
 }
 
 /* ------------------------------------------------------------------ */
+/* model lookup                                                       */
+/* ------------------------------------------------------------------ */
+
+async function searchModels() {
+  const query = $("m-query").value.trim();
+  if (!query) return;
+
+  const results = $("m-results");
+  results.textContent = "搜索中…";
+  $("m-search").disabled = true;
+
+  try {
+    const params = new URLSearchParams({ query, token: $("f-token").value.trim() });
+    const res = await fetch(`/cph/models?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+    results.textContent = "";
+    if (!data.models.length) {
+      results.textContent = "没有匹配的模型";
+      return;
+    }
+    for (const model of data.models) {
+      results.appendChild(modelRow(model));
+    }
+  } catch (error) {
+    results.textContent = `失败：${error.message}`;
+  } finally {
+    $("m-search").disabled = false;
+  }
+}
+
+function modelRow(model) {
+  const row = document.createElement("div");
+  row.className = "m-item";
+
+  const pick = document.createElement("span");
+  pick.className = "m-name";
+  pick.textContent = model.name;
+  pick.title = "点击填入 modelId";
+  pick.addEventListener("click", () => {
+    $("f-modelId").value = model.id;
+    log(`已填入 modelId=${model.id}（${model.name}）`);
+    loadVersions(model);
+  });
+
+  const tag = document.createElement("span");
+  tag.className = "m-tag";
+  tag.textContent = `${model.type} #${model.id}`;
+
+  row.append(pick, tag);
+  return row;
+}
+
+async function loadVersions(model) {
+  const wrap = $("m-versions-wrap");
+  const list = $("m-versions");
+  wrap.hidden = false;
+  $("m-versions-title").textContent = `${model.name} 的版本`;
+  list.textContent = "加载中…";
+
+  try {
+    const res = await fetch(`/cph/models/${model.id}/versions`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+    list.textContent = "";
+    if (!data.versions.length) {
+      list.textContent = "该模型没有版本数据";
+      return;
+    }
+    for (const version of data.versions) {
+      const row = document.createElement("div");
+      row.className = "m-item";
+
+      const pick = document.createElement("span");
+      pick.className = "m-name";
+      pick.textContent = version.name || `#${version.id}`;
+      pick.title = "点击填入 modelVersionId";
+      pick.addEventListener("click", () => {
+        $("f-modelVersionId").value = version.id;
+        log(`已填入 modelVersionId=${version.id}（${version.name}）`);
+      });
+
+      const tag = document.createElement("span");
+      tag.className = "m-tag";
+      tag.textContent = version.baseModel || "";
+      tag.title = version.file || "";
+
+      row.append(pick, tag);
+      list.appendChild(row);
+    }
+  } catch (error) {
+    list.textContent = `加载失败：${error.message}`;
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* selection hand-off and saving                                      */
 /* ------------------------------------------------------------------ */
 
@@ -600,6 +698,13 @@ function init() {
   });
 
   $("btn-fetch").addEventListener("click", () => fetchPage(true));
+  $("m-search").addEventListener("click", searchModels);
+  $("m-query").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") searchModels();
+  });
+  $("m-versions-close").addEventListener("click", () => {
+    $("m-versions-wrap").hidden = true;
+  });
   $("btn-reset").addEventListener("click", () => fetchPage(true));
   $("btn-select-all").addEventListener("click", () => {
     state.items.forEach((item) => state.selected.add(item.id));

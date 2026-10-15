@@ -43,10 +43,10 @@
           <input id="f-username" type="text" placeholder="留空 = 全部" />
         </label>
         <label>modelId
-          <input id="f-modelId" type="number" placeholder="可选" />
+          <input id="f-modelId" type="number" placeholder="可用下方搜索自动填入" />
         </label>
         <label>modelVersionId
-          <input id="f-modelVersionId" type="number" placeholder="可选" />
+          <input id="f-modelVersionId" type="number" placeholder="可选，点搜索结果里的版本填入" />
         </label>
         <label>postId
           <input id="f-postId" type="number" placeholder="可选" />
@@ -74,6 +74,21 @@
         <label class="inline"><input id="f-withMeta" type="checkbox" checked /> 带 metadata</label>
         <label class="inline"><input id="f-bm-all" type="checkbox" /> 显示全部（含视频/音频/3D）</label>
         <label class="inline"><input id="f-bm-none" type="checkbox" /> 清空 base model 选择</label>
+      </div>
+    </details>
+
+    <details>
+      <summary>按模型名查找（免手填 ID）</summary>
+      <div class="row">
+        <input id="m-query" type="text" placeholder="模型名，例如 krea 2 / pony / flux" style="flex:1" />
+        <button id="m-search">搜索</button>
+      </div>
+      <div id="m-results" class="m-list"></div>
+      <div id="m-versions-wrap" hidden>
+        <div class="row"><strong class="muted" id="m-versions-title"></strong>
+          <button id="m-versions-close">收起</button>
+        </div>
+        <div id="m-versions" class="m-list"></div>
       </div>
     </details>
 
