@@ -65,14 +65,41 @@ main {
 details { margin-bottom: 12px; }
 summary { cursor: pointer; font-weight: 600; padding: 4px 0; user-select: none; }
 
+/* Fields size themselves to their content instead of sitting in a rigid
+   two-column grid, so short labels take little room and the two pickers can
+   share a row. */
 .grid-form {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px 10px;
   margin: 8px 0;
 }
-.grid-form label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--muted); }
-.grid-form label.wide { grid-column: 1 / -1; }
+.grid-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+.grid-form label.half {
+  flex: 1 1 320px;
+  min-width: 260px;
+}
+.grid-form input,
+.grid-form select:not([multiple]) {
+  field-sizing: content;
+  min-width: 92px;
+  max-width: 100%;
+}
+.grid-form input[type="number"] { min-width: 100px; }
+.grid-form input[type="password"] { min-width: 200px; }
+.grid-form label.half input[type="text"],
+.grid-form label.half input[type="password"] {
+  min-width: 0;
+  width: 100%;
+}
 
 input, select, button {
   font: inherit;
@@ -98,6 +125,7 @@ select[multiple] {
   font-size: 11px;
   line-height: 1.4;
   min-height: 120px;
+  width: 100%;
 }
 .grid-form label select[multiple] { margin-top: 3px; }
 

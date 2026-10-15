@@ -60,14 +60,45 @@ async def get_config(request):
 
 
 async def post_config(request):
-    """Persist the proxy settings chosen in the panel."""
+    """Persist the settings chosen in the panel."""
     body = await _body(request)
     if "proxyEnabled" in body or "proxyUrl" in body:
         enabled = body.get("proxyEnabled")
         if not isinstance(enabled, bool):
             enabled = config.load_config().get("proxy_enabled", True)
         config.save_proxy(enabled, body.get("proxyUrl"))
+
+    if "apiToken" in body:
+        # Returns only whether a token is present, never the value.
+        config.save_token(body.get("apiToken"))
+
     return web.json_response(config.public_state())
+
+
+async def get_tags(request):
+    """Tag names for the picker. The API exposes no tag ids here."""
+    query = request.query.get("query", "")
+    async with civitai.new_session() as session:
+        try:
+            tags = await civitai.search_tags(session, query, proxy=config.get_proxy())
+        except civitai.CivitaiError as exc:
+            return _json_error(str(exc), exc.status or 502)
+    return web.json_response({"tags": tags})
+
+
+async def post_resolve_tags(request):
+    """Names -> numeric ids, since /images only accepts ids."""
+    body = await _body(request)
+    names = body.get("names") or []
+    async with civitai.new_session() as session:
+        try:
+            mapping, unresolved = await civitai.resolve_tag_ids(
+                session, names, proxy=config.get_proxy()
+            )
+        except civitai.CivitaiError as exc:
+            return _json_error(str(exc), exc.status or 502)
+    return web.json_response({"ids": mapping, "unresolved": unresolved})
+
 
 
 # --------------------------------------------------------------------------- #
@@ -236,6 +267,8 @@ def register():
     routes.get("/cph/config")(get_config)
     routes.post("/cph/config")(post_config)
     routes.get("/cph/base-models")(get_base_models)
+    routes.get("/cph/tags")(get_tags)
+    routes.post("/cph/tags/resolve")(post_resolve_tags)
     routes.get("/cph/models")(get_models)
     routes.get("/cph/models/{model_id}/versions")(get_model_versions)
     routes.post("/cph/images")(post_images)

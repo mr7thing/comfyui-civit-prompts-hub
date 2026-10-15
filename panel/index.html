@@ -39,6 +39,9 @@
         <label>limit
           <input id="f-limit" type="number" min="1" max="200" value="50" />
         </label>
+        <label>type
+          <select id="f-type"><option>image</option><option>video</option></select>
+        </label>
         <label>username
           <input id="f-username" type="text" placeholder="留空 = 全部" />
         </label>
@@ -46,26 +49,21 @@
           <input id="f-modelId" type="number" placeholder="可用下方搜索自动填入" />
         </label>
         <label>modelVersionId
-          <input id="f-modelVersionId" type="number" placeholder="可选，点搜索结果里的版本填入" />
+          <input id="f-modelVersionId" type="number" placeholder="可选" />
         </label>
         <label>postId
           <input id="f-postId" type="number" placeholder="可选" />
         </label>
-        <label>baseModels
-          <input id="f-bm-filter" type="text" placeholder="筛选 base model，可多选" />
-          <select id="f-baseModels" multiple size="7"></select>
-        </label>
-        <label>tags (id 逗号分隔)
-          <input id="f-tags" type="text" placeholder="1234,5678" />
-        </label>
         <label>browsingLevel
           <input id="f-browsingLevel" type="number" placeholder="留空 = 默认" />
         </label>
-        <label>type
-          <select id="f-type"><option>image</option><option>video</option></select>
+        <label class="half">baseModels
+          <input id="f-bm-filter" type="text" placeholder="过滤，可多选" />
+          <select id="f-baseModels" multiple size="6"></select>
         </label>
-        <label class="wide">token（仅本次会话，不保存）
-          <input id="f-token" type="password" placeholder="可选" autocomplete="off" />
+        <label class="half">tags
+          <input id="f-tag-filter" type="text" placeholder="搜索标签，如 pony" />
+          <select id="f-tags" multiple size="6"></select>
         </label>
       </div>
       <div class="row">
@@ -74,6 +72,18 @@
         <label class="inline"><input id="f-withMeta" type="checkbox" checked /> 带 metadata</label>
         <label class="inline"><input id="f-bm-all" type="checkbox" /> 显示全部（含视频/音频/3D）</label>
         <label class="inline"><input id="f-bm-none" type="checkbox" /> 清空 base model 选择</label>
+      </div>
+    </details>
+
+    <details>
+      <summary>token（浏览 Civitai 用）</summary>
+      <div class="grid-form">
+        <label class="half">token
+          <input id="f-token" type="password" placeholder="可选，仅本次会话生效" autocomplete="off" />
+        </label>
+      </div>
+      <div class="row">
+        <span class="muted">不填则用配置文件里的 token；都没有时按公开等级浏览。</span>
       </div>
     </details>
 
@@ -118,6 +128,11 @@
       <div class="row">
         <button id="btn-proxy-save">保存代理设置</button>
         <span id="proxy-detected" class="muted"></span>
+      </div>
+      <div class="row">
+        <button id="btn-token-save">把 token 写入配置文件</button>
+        <button id="btn-token-clear">清除配置文件里的 token</button>
+        <span id="token-detail" class="muted"></span>
       </div>
     </details>
 

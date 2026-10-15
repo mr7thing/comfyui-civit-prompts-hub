@@ -68,6 +68,22 @@ def detected_proxy():
     return _windows_proxy()
 
 
+def _write_config(data):
+    CONFIG_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    global _cache
+    _cache = data
+
+
+def _read_config_file():
+    if not CONFIG_PATH.is_file():
+        return {}
+    try:
+        data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def save_proxy(enabled, url=None):
     """Persist the proxy choice. Writes config.json, creating it if needed."""
     cfg = load_config()
@@ -82,25 +98,28 @@ def save_proxy(enabled, url=None):
         else:
             cfg.pop("proxy", None)
 
-    data = {}
-    if CONFIG_PATH.is_file():
-        try:
-            data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            data = {}
-    if not isinstance(data, dict):
-        data = {}
-
+    data = _read_config_file()
     data["proxy_enabled"] = cfg["proxy_enabled"]
     if "proxy" in cfg:
         data["proxy"] = cfg["proxy"]
     else:
         data.pop("proxy", None)
 
-    CONFIG_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-    global _cache
-    _cache = data
+    _write_config(data)
     return get_proxy()
+
+
+def save_token(token):
+    """Persist the API token so it survives a browser session."""
+    cleaned = str(token or "").strip()
+    data = _read_config_file()
+    if cleaned:
+        data["api_token"] = cleaned
+    else:
+        data.pop("api_token", None)
+    _write_config(data)
+    return bool(cleaned)
+
 
 
 def _windows_proxy():

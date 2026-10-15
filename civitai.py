@@ -11,6 +11,7 @@ Pagination notes that matter here:
 """
 
 import asyncio
+import re
 
 import aiohttp
 
@@ -309,6 +310,67 @@ def _primary_file(version):
         if entry.get("primary"):
             return entry.get("name")
     return files[0].get("name") if files else None
+
+
+# /api/v1/tags returns names only, but /images filters on numeric tag ids. The
+# id is embedded in the tag page's hydration payload, so names are resolved
+# there, one page per tag, only for the tags the user actually selected.
+_TAG_ID_PATTERN = re.compile(r'"id":(\d+),"name":"([^"]+)"')
+
+
+async def search_tags(session, query, proxy=None, limit=200):
+    """Tag names matching a fragment. Ids are not exposed by this endpoint."""
+    query = (query or "").strip()
+    async with session.get(
+        f"{API_ROOT}/tags",
+        params={"query": query, "limit": max(1, min(1000, int(limit or 200)))},
+        headers={"Accept": "application/json"},
+        proxy=proxy,
+    ) as resp:
+        if resp.status != 200:
+            payload = await resp.json(content_type=None)
+            raise CivitaiError(_error_message(payload) or f"HTTP {resp.status}", resp.status, payload)
+
+        body = await resp.json(content_type=None)
+        return [
+            {"name": item.get("name")}
+            for item in body.get("items") or []
+            if item.get("name")
+        ]
+
+
+async def resolve_tag_ids(session, names, proxy=None):
+    """Map tag names to the numeric ids /images expects.
+
+    Returns ``(mapping, unresolved)``. An unresolved name is reported instead
+    of being dropped, so a silently ignored filter can never happen.
+    """
+    mapping = {}
+    unresolved = []
+
+    for name in names or []:
+        name = str(name).strip()
+        if not name:
+            continue
+        async with session.get(
+            f"https://civitai.com/tag/{name}",
+            headers={"User-Agent": "Mozilla/5.0", "Accept": "text/html"},
+            proxy=proxy,
+        ) as resp:
+            html = await resp.text()
+
+        match = next(
+            (int(tag_id) for tag_id, tag_name in _TAG_ID_PATTERN.findall(html)
+             if tag_name.lower() == name.lower()),
+            None,
+        )
+        if match is None:
+            unresolved.append(name)
+        else:
+            mapping[name] = match
+
+    return mapping, unresolved
+
 
 
 

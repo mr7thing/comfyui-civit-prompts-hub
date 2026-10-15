@@ -54,6 +54,7 @@ async function postJSON(path, body) {
 
 function readFilters() {
   const baseModels = [...$("f-baseModels").selectedOptions].map((o) => o.value);
+  const tagNames = [...$("f-tags").selectedOptions].map((o) => o.value);
   const f = {
     sort: $("f-sort").value,
     period: $("f-period").value,
@@ -63,15 +64,25 @@ function readFilters() {
     modelId: $("f-modelId").value.trim(),
     modelVersionId: $("f-modelVersionId").value.trim(),
     postId: $("f-postId").value.trim(),
-    tags: $("f-tags").value.trim(),
     browsingLevel: $("f-browsingLevel").value.trim(),
   };
   if (baseModels.length) f.baseModels = baseModels;
+  if (tagNames.length) f.tagNames = tagNames;
   for (const key of Object.keys(f)) {
     if (f[key] === "") delete f[key];
   }
   return f;
 }
+
+async function resolveTagIds(names) {
+  const data = await postJSON("/cph/tags/resolve", { names });
+  if (data.unresolved?.length) {
+    // Never silently drop a tag: an ignored filter would look like it applied.
+    throw new Error(`无法解析标签 ID：${data.unresolved.join(", ")}`);
+  }
+  return Object.values(data.ids || {});
+}
+
 
 /* ------------------------------------------------------------------ */
 /* base model picker                                                  */
@@ -135,6 +146,20 @@ async function fetchPage(reset) {
 
   const filters = readFilters();
   if (!reset && state.cursor) filters.cursor = state.cursor;
+
+  // Tag names have to become numeric ids before /images will accept them.
+  if (filters.tagNames && filters.tagNames.length) {
+    try {
+      const resolved = await resolveTagIds(filters.tagNames);
+      if (resolved.length) filters.tags = resolved;
+    } catch (error) {
+      setStatus(`标签解析失败：${error.message}`);
+      state.loading = false;
+      $("btn-fetch").disabled = false;
+      return;
+    }
+  }
+  delete filters.tagNames;
 
   try {
     const data = await postJSON("/cph/images", {
@@ -239,6 +264,60 @@ function updateSentinel() {
 
 function selectedItems() {
   return state.items.filter((item) => state.selected.has(item.id));
+}
+
+/* ------------------------------------------------------------------ */
+/* tag picker                                                         */
+/* ------------------------------------------------------------------ */
+
+const tagState = { pool: [], selected: new Set(), timer: null };
+
+async function searchTags() {
+  const query = $("f-tag-filter").value.trim();
+  try {
+    const params = new URLSearchParams({ query });
+    const res = await fetch(`/cph/tags?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+    tagState.pool = data.tags.map((t) => t.name);
+    renderTags(query);
+  } catch (error) {
+    $("f-tags").textContent = "";
+    const option = document.createElement("option");
+    option.textContent = `加载失败：${error.message}`;
+    option.disabled = true;
+    $("f-tags").appendChild(option);
+  }
+}
+
+function renderTags(filterText) {
+  const select = $("f-tags");
+  const needle = filterText.trim().toLowerCase();
+  const matches = needle
+    ? tagState.pool.filter((name) => name.toLowerCase().includes(needle))
+    : tagState.pool;
+
+  // A selection filtered out of the list would vanish from the request.
+  for (const name of [...tagState.selected]) {
+    if (!tagState.pool.includes(name)) tagState.selected.delete(name);
+  }
+
+  select.textContent = "";
+  if (!matches.length) {
+    const empty = document.createElement("option");
+    empty.textContent = needle ? "（无匹配）" : "（输入关键词搜索标签）";
+    empty.disabled = true;
+    select.appendChild(empty);
+    return;
+  }
+  for (const name of matches) {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name;
+    option.selected = tagState.selected.has(name);
+    select.appendChild(option);
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -645,6 +724,9 @@ async function initConfig() {
     });
     const data = await res.json();
     $("token-state").textContent = data.has_token ? "token: 已配置" : "token: 未配置（公开等级）";
+    $("token-detail").textContent = data.has_token
+      ? `config.json 里有 token（来源：${data.token_source || "file"}）`
+      : "配置文件里没有 token";
 
     $("n-proxy-enabled").checked = data.proxy_enabled !== false;
     $("n-proxy-url").value = data.proxy_configured || "";
@@ -678,9 +760,42 @@ async function saveProxySettings() {
   }
 }
 
+async function saveToken(action) {
+  const token = action === "save" ? $("f-token").value.trim() : "";
+  if (action === "save" && !token) {
+    log("token 输入框是空的，没有写入", "err");
+    return;
+  }
+  try {
+    const data = await postJSON("/cph/config", { apiToken: token });
+    $("token-state").textContent = data.has_token ? "token: 已配置" : "token: 未配置（公开等级）";
+    $("token-detail").textContent = data.has_token
+      ? `已保存在 config.json（来源：${data.token_source || "file"}）`
+      : "配置文件里没有 token";
+    if (action === "save") {
+      $("f-token").value = "";
+      log("token 已写入配置文件", "ok");
+      setStatus("token 已保存");
+    } else {
+      log("已清除配置文件里的 token", "ok");
+      setStatus("token 已清除");
+    }
+  } catch (error) {
+    log(`token 操作失败：${error.message}`, "err");
+  }
+}
+
 function init() {
   $("f-bm-filter").addEventListener("input", (event) => {
     renderBaseModels(event.target.value);
+  });
+  // Tag search hits the API, so debounce instead of firing per keystroke.
+  $("f-tag-filter").addEventListener("input", () => {
+    clearTimeout(tagState.timer);
+    tagState.timer = setTimeout(searchTags, 350);
+  });
+  $("f-tags").addEventListener("change", (event) => {
+    tagState.selected = new Set([...event.target.selectedOptions].map((o) => o.value));
   });
   $("f-bm-all").addEventListener("change", () => {
     renderBaseModels($("f-bm-filter").value);
@@ -717,6 +832,8 @@ function init() {
   $("btn-send").addEventListener("click", sendSelection);
   $("btn-save").addEventListener("click", saveSelection);
   $("btn-proxy-save").addEventListener("click", saveProxySettings);
+  $("btn-token-save").addEventListener("click", () => saveToken("save"));
+  $("btn-token-clear").addEventListener("click", () => saveToken("clear"));
   $("btn-run").addEventListener("click", enqueueSelected);
   $("btn-stop").addEventListener("click", stop);
   $("btn-clear-queue").addEventListener("click", () => {
@@ -739,6 +856,7 @@ function init() {
 
   initConfig();
   initBaseModels();
+  searchTags();
   fetchPage(true);
   loadWorkflow(true);
   setInterval(() => loadWorkflow(false), 5000);
