@@ -454,9 +454,36 @@ async function initConfig() {
     });
     const data = await res.json();
     $("token-state").textContent = data.has_token ? "token: 已配置" : "token: 未配置（公开等级）";
-    $("proxy-state").textContent = data.proxy ? "proxy: 已启用" : "proxy: 直连";
+
+    $("n-proxy-enabled").checked = data.proxy_enabled !== false;
+    $("n-proxy-url").value = data.proxy_configured || "";
+    $("proxy-detected").textContent = data.proxy_detected
+      ? `系统探测到：${data.proxy_detected}`
+      : "系统未探测到代理";
+    updateProxyBadge(data.proxy);
   } catch (error) {
     /* ignore */
+  }
+}
+
+function updateProxyBadge(activeProxy) {
+  $("proxy-state").textContent = activeProxy ? "proxy: 已启用" : "proxy: 直连";
+}
+
+async function saveProxySettings() {
+  const enabled = $("n-proxy-enabled").checked;
+  const url = $("n-proxy-url").value.trim();
+  try {
+    const data = await postJSON("/cph/config", { proxyEnabled: enabled, proxyUrl: url });
+    $("n-proxy-url").value = data.proxy_configured || "";
+    updateProxyBadge(data.proxy);
+    $("proxy-detected").textContent = data.proxy_detected
+      ? `系统探测到：${data.proxy_detected}`
+      : "系统未探测到代理";
+    log(`代理设置已保存：${data.proxy || "直连"}`, "ok");
+    setStatus("代理设置已保存");
+  } catch (error) {
+    log(`代理设置保存失败：${error.message}`, "err");
   }
 }
 
@@ -473,6 +500,7 @@ function init() {
   });
   $("btn-send").addEventListener("click", sendSelection);
   $("btn-save").addEventListener("click", saveSelection);
+  $("btn-proxy-save").addEventListener("click", saveProxySettings);
   $("btn-run").addEventListener("click", enqueueSelected);
   $("btn-stop").addEventListener("click", stop);
   $("btn-clear-queue").addEventListener("click", () => {

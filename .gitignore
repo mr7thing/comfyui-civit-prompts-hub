@@ -10,3 +10,6 @@ dist/
 
 # local reference docs
 refs/
+
+# holds the API token and proxy settings
+config.json

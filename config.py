@@ -45,14 +45,62 @@ def has_token():
 def get_proxy():
     """Outbound proxy URL, or None for a direct connection.
 
-    Checked in order: explicit ``proxy`` in config.json, then the Windows
-    internet proxy setting (aiohttp does not read that on its own).
+    Resolution order:
+      1. ``proxy_enabled: false`` in config.json forces a direct connection
+      2. ``proxy`` in config.json
+      3. the Windows internet proxy setting (aiohttp does not read that itself)
     """
-    configured = load_config().get("proxy")
+    cfg = load_config()
+
+    enabled = cfg.get("proxy_enabled")
+    if enabled is False:
+        return None
+
+    configured = cfg.get("proxy")
     if configured:
         return str(configured)
 
     return _windows_proxy()
+
+
+def detected_proxy():
+    """The proxy found in the Windows settings, ignoring our own overrides."""
+    return _windows_proxy()
+
+
+def save_proxy(enabled, url=None):
+    """Persist the proxy choice. Writes config.json, creating it if needed."""
+    cfg = load_config()
+    cfg["proxy_enabled"] = bool(enabled)
+
+    if url is not None:
+        cleaned = str(url).strip()
+        if cleaned:
+            if not cleaned.startswith(("http://", "https://", "socks5://")):
+                cleaned = f"http://{cleaned}"
+            cfg["proxy"] = cleaned
+        else:
+            cfg.pop("proxy", None)
+
+    data = {}
+    if CONFIG_PATH.is_file():
+        try:
+            data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+    if not isinstance(data, dict):
+        data = {}
+
+    data["proxy_enabled"] = cfg["proxy_enabled"]
+    if "proxy" in cfg:
+        data["proxy"] = cfg["proxy"]
+    else:
+        data.pop("proxy", None)
+
+    CONFIG_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    global _cache
+    _cache = data
+    return get_proxy()
 
 
 def _windows_proxy():
@@ -105,4 +153,7 @@ def public_state():
         ),
         "browsing_level": cfg.get("browsing_level"),
         "proxy": get_proxy(),
+        "proxy_detected": detected_proxy(),
+        "proxy_enabled": cfg.get("proxy_enabled", True),
+        "proxy_configured": cfg.get("proxy"),
     }

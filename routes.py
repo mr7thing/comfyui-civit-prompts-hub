@@ -59,6 +59,17 @@ async def get_config(request):
     return web.json_response(state)
 
 
+async def post_config(request):
+    """Persist the proxy settings chosen in the panel."""
+    body = await _body(request)
+    if "proxyEnabled" in body or "proxyUrl" in body:
+        enabled = body.get("proxyEnabled")
+        if not isinstance(enabled, bool):
+            enabled = config.load_config().get("proxy_enabled", True)
+        config.save_proxy(enabled, body.get("proxyUrl"))
+    return web.json_response(config.public_state())
+
+
 # --------------------------------------------------------------------------- #
 # browsing
 # --------------------------------------------------------------------------- #
@@ -177,6 +188,7 @@ def register():
     # /cph/config and friends are not swallowed by it.
     routes.get("/cph/")(get_panel_index)
     routes.get("/cph/config")(get_config)
+    routes.post("/cph/config")(post_config)
     routes.post("/cph/images")(post_images)
     routes.post("/cph/workflow")(post_workflow)
     routes.get("/cph/workflow")(get_workflow)

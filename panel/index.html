@@ -88,6 +88,22 @@
   <!-- ---------------- right: tasks ---------------- -->
   <section class="pane tasks">
     <details open>
+      <summary>网络</summary>
+      <div class="checks">
+        <label><input id="n-proxy-enabled" type="checkbox" /> 启用代理（拉取 Civitai 时走代理）</label>
+      </div>
+      <div class="grid-form">
+        <label class="wide">代理地址（留空 = 自动用系统探测到的）
+          <input id="n-proxy-url" type="text" placeholder="http://127.0.0.1:7890" />
+        </label>
+      </div>
+      <div class="row">
+        <button id="btn-proxy-save">保存代理设置</button>
+        <span id="proxy-detected" class="muted"></span>
+      </div>
+    </details>
+
+    <details open>
       <summary>保存 Civitai 原始素材</summary>
       <div class="checks">
         <label><input id="s-image" type="checkbox" checked /> 下载原图</label>
