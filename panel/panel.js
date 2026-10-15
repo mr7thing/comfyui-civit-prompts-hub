@@ -5,10 +5,13 @@ const $ = (id) => document.getElementById(id);
 const state = {
   items: [],          // raw Civitai items, in load order
   selected: new Set(), // image ids
+  renderedCount: 0,   // cards already in the grid
   parsed: new Map(),   // id -> normalised {prompt, negative, name, ...}
   cursor: null,
+  cursorRetries: 0,
   hasMore: true,
   loading: false,
+  userScrolled: false,
   workflow: null,
   workflowAge: null,
 };
@@ -170,20 +173,27 @@ async function fetchPage(reset) {
     if (reset) {
       state.items = [];
       state.selected.clear();
+      state.renderedCount = 0;
+      state.cursorRetries = 0;
       render();
     }
     state.items.push(...data.items);
     state.cursor = data.nextCursor;
     state.hasMore = Boolean(data.nextCursor);
-    render();
-    setStatus(state.hasMore ? `还有更多（第 ${state.items.length} 张）` : `到底了，共 ${state.items.length} 张`);
+    appendCards();
+    setStatus(state.hasMore ? `还有更多（已加载 ${state.items.length} 张）` : `到底了，共 ${state.items.length} 张`);
   } catch (error) {
-    // A dead cursor just means starting over.
-    if (String(error.message).includes("start again")) {
+    // A dead cursor just means starting over — but only once, otherwise a
+    // broken cursor would restart the page loop forever.
+    const message = String(error.message);
+    if (/start again|cannot be continued/i.test(message) && state.cursorRetries < 1) {
+      state.cursorRetries += 1;
       state.cursor = null;
       state.hasMore = true;
+      setStatus("翻页游标已失效，已重置到第一页");
+    } else {
+      setStatus(`失败：${message}`);
     }
-    setStatus(`失败：${error.message}`);
   } finally {
     state.loading = false;
     $("btn-fetch").disabled = false;
@@ -198,8 +208,15 @@ function card(item, index) {
 
   const img = document.createElement("img");
   img.loading = "lazy";
-  img.src = item.url;
+  img.decoding = "async";
+  // The browser cannot reach image.civitai.com on its own here, so images are
+  // streamed through the plugin, which knows how to use the outbound proxy.
+  img.src = `/cph/image?url=${encodeURIComponent(item.url)}`;
   img.alt = `civitai ${item.id}`;
+  img.addEventListener("error", () => {
+    el.classList.add("broken");
+    img.remove();
+  });
   el.appendChild(img);
 
   const idx = document.createElement("div");
@@ -251,16 +268,36 @@ function render() {
   updateSentinel();
 }
 
+/** Append only the new cards instead of rebuilding the whole grid. */
+function appendCards() {
+  const grid = $("grid");
+  for (let index = state.renderedCount; index < state.items.length; index++) {
+    grid.appendChild(card(state.items[index], index));
+  }
+  state.renderedCount = state.items.length;
+  $("count").textContent = `已加载 ${state.items.length} 张`;
+  updateSelectedCount();
+  updateSentinel();
+}
+
+function refreshSelectionStyles() {
+  for (const el of $("grid").children) {
+    el.classList.toggle("selected", state.selected.has(Number(el.dataset.id)));
+  }
+}
+
 function updateSelectedCount() {
   $("selected-count").textContent = `已选 ${state.selected.size}`;
 }
 
 function updateSentinel() {
-  $("sentinel").textContent = state.hasMore
-    ? "向下滚动加载更多…"
+  const sentinel = $("sentinel");
+  sentinel.textContent = state.hasMore
+    ? `向下滚动或点「加载更多」继续（已加载 ${state.items.length} 张）`
     : "没有更多了";
-  $("sentinel").hidden = !state.hasMore;
+  $("btn-more").hidden = !state.hasMore;
 }
+
 
 function selectedItems() {
   return state.items.filter((item) => state.selected.has(item.id));
@@ -813,6 +850,10 @@ function init() {
   });
 
   $("btn-fetch").addEventListener("click", () => fetchPage(true));
+  $("btn-more").addEventListener("click", () => {
+    state.userScrolled = true;
+    fetchPage(false);
+  });
   $("m-search").addEventListener("click", searchModels);
   $("m-query").addEventListener("keydown", (event) => {
     if (event.key === "Enter") searchModels();
@@ -823,11 +864,11 @@ function init() {
   $("btn-reset").addEventListener("click", () => fetchPage(true));
   $("btn-select-all").addEventListener("click", () => {
     state.items.forEach((item) => state.selected.add(item.id));
-    render();
+    refreshSelectionStyles();
   });
   $("btn-select-none").addEventListener("click", () => {
     state.selected.clear();
-    render();
+    refreshSelectionStyles();
   });
   $("btn-send").addEventListener("click", sendSelection);
   $("btn-save").addEventListener("click", saveSelection);
@@ -850,9 +891,15 @@ function init() {
   });
 
   const observer = new IntersectionObserver((entries) => {
-    if (entries.some((e) => e.isIntersecting)) fetchPage(false);
+    if (!entries.some((e) => e.isIntersecting)) return;
+    // The sentinel sits in view on load; without this guard the panel would
+    // page through results on its own until a cursor broke.
+    if (!state.userScrolled) return;
+    fetchPage(false);
   }, { rootMargin: "400px" });
   observer.observe($("sentinel"));
+
+  window.addEventListener("scroll", () => { state.userScrolled = true; }, { passive: true });
 
   initConfig();
   initBaseModels();

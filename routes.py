@@ -4,6 +4,7 @@ These exist so the standalone panel page can reach the Civitai API without CORS
 issues and without the API token ever leaving the server process.
 """
 
+import asyncio
 import time
 from pathlib import Path
 
@@ -12,6 +13,8 @@ from aiohttp import web
 from . import civitai, config, meta, saver
 
 PANEL_DIR = Path(__file__).parent / "panel"
+
+IMAGE_HOST_PREFIX = "https://image.civitai.com/"
 
 # Small hand-off buffer between the panel page and the ComfyUI page extension.
 _state = {"workflow": None, "selection": None, "updated": 0}
@@ -73,6 +76,44 @@ async def post_config(request):
         config.save_token(body.get("apiToken"))
 
     return web.json_response(config.public_state())
+
+
+async def get_image(request):
+    """Proxy a Civitai image.
+
+    The browser cannot reach image.civitai.com directly when the outbound proxy
+    only lives in this process, so thumbnails are streamed through here.
+    """
+    url = request.query.get("url", "")
+    if not url.startswith(IMAGE_HOST_PREFIX):
+        return _json_error(f"只代理 {IMAGE_HOST_PREFIX} 的图片", 400)
+
+    proxy = config.get_proxy()
+    last_error = None
+
+    # The local proxy occasionally drops connections, so retry before giving up.
+    for attempt in range(2):
+        try:
+            async with civitai.new_session() as session:
+                async with session.get(
+                    url, proxy=proxy, allow_redirects=True
+                ) as upstream:
+                    if upstream.status == 200:
+                        body = await upstream.read()
+                        content_type = upstream.headers.get("Content-Type", "image/jpeg")
+                        return web.Response(
+                            body=body,
+                            content_type=content_type,
+                            headers={"Cache-Control": "public, max-age=86400"},
+                        )
+                    last_error = f"图片拉取失败 ({upstream.status})"
+        except OSError as exc:
+            last_error = f"代理连接失败：{exc}"
+        await asyncio.sleep(0.6)
+
+    hint = "（代理可能断了，检查 127.0.0.1:7890）" if proxy else ""
+    return _json_error(f"{last_error or '图片拉取失败'}{hint}", 502)
+
 
 
 async def get_tags(request):
@@ -171,7 +212,10 @@ async def post_images(request):
         except civitai.CursorExpired as exc:
             return _json_error(str(exc), 409)
         except civitai.CivitaiError as exc:
-            return _json_error(str(exc), exc.status or 502)
+            message = str(exc)
+            if "Network error" in message and proxy:
+                message += "（代理可能断了，检查面板里的代理设置）"
+            return _json_error(message, exc.status or 502)
 
     return web.json_response(
         {"items": items, "nextCursor": next_cursor, "nextPage": next_page}
@@ -267,6 +311,7 @@ def register():
     routes.get("/cph/config")(get_config)
     routes.post("/cph/config")(post_config)
     routes.get("/cph/base-models")(get_base_models)
+    routes.get("/cph/image")(get_image)
     routes.get("/cph/tags")(get_tags)
     routes.post("/cph/tags/resolve")(post_resolve_tags)
     routes.get("/cph/models")(get_models)

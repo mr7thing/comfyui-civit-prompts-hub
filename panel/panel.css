@@ -190,7 +190,11 @@ select[multiple] {
 .card .badge.wf { color: var(--ok); }
 .card .badge.noprompt { color: var(--err); }
 
-.sentinel { text-align: center; color: var(--muted); padding: 14px; font-size: 11px; }
+.card.broken .meta { border-top: 1px dashed var(--err); }
+.card.broken { border-color: var(--err); }
+
+.load-more { justify-content: center; }
+.sentinel { text-align: center; color: var(--muted); font-size: 11px; }
 
 .log {
   margin-top: 8px;
