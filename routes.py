@@ -15,6 +15,7 @@ from . import civitai, config, meta, saver
 PANEL_DIR = Path(__file__).parent / "panel"
 
 IMAGE_HOST_PREFIX = "https://image.civitai.com/"
+PREVIEW_WIDTH = 480
 
 # Small hand-off buffer between the panel page and the ComfyUI page extension.
 _state = {"workflow": None, "selection": None, "updated": 0}
@@ -79,40 +80,74 @@ async def post_config(request):
 
 
 async def get_image(request):
-    """Proxy a Civitai image.
+    """Proxy a Civitai image, downscaled for the gallery.
 
     The browser cannot reach image.civitai.com directly when the outbound proxy
-    only lives in this process, so thumbnails are streamed through here.
+    only lives in this process. The CDN ignores ?width=, so previews are shrunk
+    here with Pillow instead of shipping ~1 MB originals to the page.
     """
     url = request.query.get("url", "")
     if not url.startswith(IMAGE_HOST_PREFIX):
         return _json_error(f"只代理 {IMAGE_HOST_PREFIX} 的图片", 400)
 
+    try:
+        target_width = max(0, min(2048, int(request.query.get("w") or PREVIEW_WIDTH)))
+    except ValueError:
+        target_width = PREVIEW_WIDTH
+
     proxy = config.get_proxy()
     last_error = None
 
     # The local proxy occasionally drops connections, so retry before giving up.
-    for attempt in range(2):
+    for _ in range(2):
         try:
             async with civitai.new_session() as session:
-                async with session.get(
-                    url, proxy=proxy, allow_redirects=True
-                ) as upstream:
-                    if upstream.status == 200:
-                        body = await upstream.read()
-                        content_type = upstream.headers.get("Content-Type", "image/jpeg")
-                        return web.Response(
-                            body=body,
-                            content_type=content_type,
-                            headers={"Cache-Control": "public, max-age=86400"},
-                        )
-                    last_error = f"图片拉取失败 ({upstream.status})"
+                async with session.get(url, proxy=proxy, allow_redirects=True) as upstream:
+                    if upstream.status != 200:
+                        last_error = f"图片拉取失败 ({upstream.status})"
+                        continue
+                    body = await upstream.read()
+                    content_type = upstream.headers.get("Content-Type", "image/jpeg")
+            break
         except OSError as exc:
             last_error = f"代理连接失败：{exc}"
-        await asyncio.sleep(0.6)
+            await asyncio.sleep(0.6)
+    else:
+        hint = "（代理可能断了，检查 127.0.0.1:7890）" if proxy else ""
+        return _json_error(f"{last_error or '图片拉取失败'}{hint}", 502)
 
-    hint = "（代理可能断了，检查 127.0.0.1:7890）" if proxy else ""
-    return _json_error(f"{last_error or '图片拉取失败'}{hint}", 502)
+    if target_width:
+        shrunk = _shrink(body, target_width)
+        if shrunk:
+            body, content_type = shrunk
+
+    return web.Response(
+        body=body,
+        content_type=content_type,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+def _shrink(body, target_width):
+    """Return (bytes, content_type) for a downscaled preview, or None."""
+    try:
+        import io
+
+        from PIL import Image
+
+        with Image.open(io.BytesIO(body)) as image:
+            if image.width <= target_width:
+                return None
+            image = image.convert("RGB")
+            height = round(image.height * target_width / image.width)
+            image = image.resize((target_width, height), Image.LANCZOS)
+            buffer = io.BytesIO()
+            image.save(buffer, format="JPEG", quality=80, optimize=True)
+            return buffer.getvalue(), "image/jpeg"
+    except Exception:
+        # A preview is best-effort; the original still renders if this fails.
+        return None
+
 
 
 

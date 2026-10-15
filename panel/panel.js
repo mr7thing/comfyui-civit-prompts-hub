@@ -210,8 +210,9 @@ function card(item, index) {
   img.loading = "lazy";
   img.decoding = "async";
   // The browser cannot reach image.civitai.com on its own here, so images are
-  // streamed through the plugin, which knows how to use the outbound proxy.
-  img.src = `/cph/image?url=${encodeURIComponent(item.url)}`;
+  // streamed through the plugin, which uses the outbound proxy and downscales
+  // them. Saving originals is a separate, explicit action.
+  img.src = `/cph/image?w=480&url=${encodeURIComponent(item.url)}`;
   img.alt = `civitai ${item.id}`;
   img.addEventListener("error", () => {
     el.classList.add("broken");
