@@ -1,0 +1,14 @@
+[project]
+name = "comfyui-civit-prompts-hub"
+version = "0.1.0"
+description = "Civitai prompt hub nodes for ComfyUI"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.urls]
+Repository = ""
+
+[tool.comfy]
+PublisherId = ""
+DisplayName = "Civit Prompts Hub"
+Icon = ""
