@@ -53,6 +53,7 @@ async function postJSON(path, body) {
 }
 
 function readFilters() {
+  const baseModels = [...$("f-baseModels").selectedOptions].map((o) => o.value);
   const f = {
     sort: $("f-sort").value,
     period: $("f-period").value,
@@ -62,15 +63,65 @@ function readFilters() {
     modelId: $("f-modelId").value.trim(),
     modelVersionId: $("f-modelVersionId").value.trim(),
     postId: $("f-postId").value.trim(),
-    baseModels: $("f-baseModels").value.trim(),
     tags: $("f-tags").value.trim(),
     browsingLevel: $("f-browsingLevel").value.trim(),
   };
+  if (baseModels.length) f.baseModels = baseModels;
   for (const key of Object.keys(f)) {
     if (f[key] === "") delete f[key];
   }
   return f;
 }
+
+/* ------------------------------------------------------------------ */
+/* base model picker                                                  */
+/* ------------------------------------------------------------------ */
+
+const baseModelState = { all: [], image: [], selected: new Set() };
+
+async function initBaseModels() {
+  try {
+    const res = await fetch("/cph/base-models");
+    const data = await res.json();
+    baseModelState.all = data.all || [];
+    baseModelState.image = data.image || [];
+    renderBaseModels("");
+  } catch (error) {
+    $("f-baseModels").innerHTML = '<option>（无法加载 base model 列表）</option>';
+  }
+}
+
+function renderBaseModels(filterText) {
+  const select = $("f-baseModels");
+  const showAll = $("f-bm-all").checked;
+  const pool = showAll ? baseModelState.all : baseModelState.image;
+  const needle = filterText.trim().toLowerCase();
+
+  const matches = pool.filter((m) => !needle || m.toLowerCase().includes(needle));
+
+  // Keep only the options still in the pool; a hidden selection would silently
+  // disappear from the request.
+  for (const value of [...baseModelState.selected]) {
+    if (!pool.includes(value)) baseModelState.selected.delete(value);
+  }
+
+  select.textContent = "";
+  if (!matches.length) {
+    const empty = document.createElement("option");
+    empty.textContent = "（无匹配）";
+    empty.disabled = true;
+    select.appendChild(empty);
+    return;
+  }
+  for (const model of matches) {
+    const option = document.createElement("option");
+    option.value = model;
+    option.textContent = model;
+    option.selected = baseModelState.selected.has(model);
+    select.appendChild(option);
+  }
+}
+
 
 /* ------------------------------------------------------------------ */
 /* browsing                                                           */
@@ -530,6 +581,24 @@ async function saveProxySettings() {
 }
 
 function init() {
+  $("f-bm-filter").addEventListener("input", (event) => {
+    renderBaseModels(event.target.value);
+  });
+  $("f-bm-all").addEventListener("change", () => {
+    renderBaseModels($("f-bm-filter").value);
+  });
+  $("f-bm-none").addEventListener("change", (event) => {
+    if (!event.target.checked) return;
+    baseModelState.selected.clear();
+    renderBaseModels($("f-bm-filter").value);
+    event.target.checked = false;
+  });
+  $("f-baseModels").addEventListener("change", (event) => {
+    baseModelState.selected = new Set(
+      [...event.target.selectedOptions].map((o) => o.value)
+    );
+  });
+
   $("btn-fetch").addEventListener("click", () => fetchPage(true));
   $("btn-reset").addEventListener("click", () => fetchPage(true));
   $("btn-select-all").addEventListener("click", () => {
@@ -564,6 +633,7 @@ function init() {
   observer.observe($("sentinel"));
 
   initConfig();
+  initBaseModels();
   fetchPage(true);
   loadWorkflow(true);
   setInterval(() => loadWorkflow(false), 5000);

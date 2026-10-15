@@ -93,6 +93,14 @@ button.primary:hover:not(:disabled) { background: #245a9c; }
 .checks label, .inline { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 .inline { color: var(--muted); }
 
+select[multiple] {
+  padding: 2px;
+  font-size: 11px;
+  line-height: 1.4;
+  min-height: 120px;
+}
+.grid-form label select[multiple] { margin-top: 3px; }
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));

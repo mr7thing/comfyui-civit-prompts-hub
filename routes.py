@@ -74,6 +74,16 @@ async def post_config(request):
 # browsing
 # --------------------------------------------------------------------------- #
 
+async def get_base_models(request):
+    """The accepted baseModels values, so the panel never has to guess."""
+    return web.json_response(
+        {
+            "all": list(civitai.BASE_MODELS),
+            "image": list(civitai.IMAGE_BASE_MODELS),
+        }
+    )
+
+
 async def post_images(request):
     body = await _body(request)
     filters = body.get("filters") or {}
@@ -81,6 +91,11 @@ async def post_images(request):
     # a token typed into the panel wins for this request only
     token = body.get("token") or config.get_token()
     proxy = config.get_proxy()
+
+    try:
+        params = civitai.build_params(filters, with_meta=with_meta)
+    except ValueError as exc:
+        return _json_error(str(exc), 400)
 
     async with civitai.new_session() as session:
         try:
@@ -90,6 +105,7 @@ async def post_images(request):
                 token=token,
                 with_meta=with_meta,
                 proxy=proxy,
+                prepared=params,
             )
         except civitai.CursorExpired as exc:
             return _json_error(str(exc), 409)
@@ -189,6 +205,7 @@ def register():
     routes.get("/cph/")(get_panel_index)
     routes.get("/cph/config")(get_config)
     routes.post("/cph/config")(post_config)
+    routes.get("/cph/base-models")(get_base_models)
     routes.post("/cph/images")(post_images)
     routes.post("/cph/workflow")(post_workflow)
     routes.get("/cph/workflow")(get_workflow)

@@ -40,6 +40,77 @@ SORTS = ("Most Reactions", "Most Comments", "Most Collected", "Newest", "Oldest"
 PERIODS = ("Day", "Week", "Month", "Year", "AllTime")
 MEDIA_TYPES = ("image", "video", "audio")
 
+# Authoritative enum, taken from the API itself: sending an unknown value makes
+# /images answer 400 with a ZodError listing every accepted option.
+BASE_MODELS = (
+    "Anima", "AuraFlow", "Chroma", "CogVideoX", "Ernie", "Flux.1 S", "Flux.1 D",
+    "Flux.1 Krea", "Flux.1 Kontext", "Flux.2 D", "Flux.2 Klein 9B",
+    "Flux.2 Klein 9B-base", "Flux.2 Klein 4B", "Flux.2 Klein 4B-base", "Flux.3",
+    "Flux 3 Video", "Grok", "HappyHorse", "HiDream", "HiDream-O1", "Hunyuan 1",
+    "Hunyuan Video", "Ideogram 4.0", "Ideogram 4.5", "Boogu", "Illustrious",
+    "Imagen4", "Kolors", "Krea 2", "Krea 2 Turbo", "Krea 3", "LTXV", "LTXV2",
+    "LTXV 2.3", "LTXV 2.5", "Lens", "Lumina", "MageFlow", "MAI", "Mochi",
+    "Nano Banana", "NoobAI", "ODOR", "OpenAI", "Upscaler", "Other", "PixArt a",
+    "PixArt E", "Playground v2", "Pony", "Pony V7", "Qwen", "Qwen 2", "Qwen 2.1",
+    "Qwen 3", "Stable Cascade", "SD 1.4", "SD 1.5", "SD 1.5 LCM",
+    "SD 1.5 Hyper", "SD 2.0", "SD 2.0 768", "SD 2.1", "SD 2.1 768",
+    "SD 2.1 Unclip", "SD 3", "SD 3.5", "SD 3.5 Large", "SD 3.5 Large Turbo",
+    "SD 3.5 Medium", "SDXL 0.9", "SDXL 1.0", "SDXL 1.0 LCM", "SDXL Lightning",
+    "SDXL Hyper", "SDXL Turbo", "SDXL Distilled", "Reve", "Muse Image",
+    "Seedream", "SVD", "SVD XT", "Sora 2", "Veo 3", "Wan Video",
+    "Wan Video 1.3B t2v", "Wan Video 14B t2v", "Wan Video 14B i2v 480p",
+    "Wan Video 14B i2v 720p", "Wan Video 2.2 TI2V-5B", "Wan Video 2.2 I2V-A14B",
+    "Wan Video 2.2 T2V-A14B", "Wan Video 2.5 T2V", "Wan Video 2.5 I2V",
+    "Wan Image 2.7", "Wan Video 2.7", "Wan Video 3.0", "ZImageTurbo",
+    "ZImageBase", "Ming Image Design 0.1", "Ming Image Design Layer 0.1",
+    "Vidu Q1", "MiniMax H3", "Kling", "Seedance", "ACE Audio", "MiniMax Music 3",
+    "YuE2", "Sonilo", "PolyGen", "Tripo", "Hunyuan3D", "Pixal3D", "Trellis.2",
+)
+
+BASE_MODEL_SET = frozenset(BASE_MODELS)
+
+# Our own curation of the still-image bases. The full enum above also holds
+# video, audio and 3D entries, which are noise in an image gallery filter.
+IMAGE_BASE_MODELS = (
+    "Anima", "AuraFlow", "Chroma", "Ernie", "Flux.1 S", "Flux.1 D", "Flux.1 Krea",
+    "Flux.1 Kontext", "Flux.2 D", "Flux.2 Klein 9B", "Flux.2 Klein 9B-base",
+    "Flux.2 Klein 4B", "Flux.2 Klein 4B-base", "Flux.3", "Grok", "HappyHorse",
+    "HiDream", "HiDream-O1", "Ideogram 4.0", "Ideogram 4.5", "Boogu",
+    "Illustrious", "Imagen4", "Kolors", "Krea 2", "Krea 2 Turbo", "Krea 3",
+    "Lens", "Lumina", "MageFlow", "MAI", "Nano Banana", "NoobAI", "ODOR",
+    "OpenAI", "PixArt a", "PixArt E", "Playground v2", "Pony", "Pony V7",
+    "Qwen", "Qwen 2", "Qwen 2.1", "Qwen 3", "SD 1.4", "SD 1.5", "SD 1.5 LCM",
+    "SD 1.5 Hyper", "SD 2.0", "SD 2.0 768", "SD 2.1", "SD 2.1 768",
+    "SD 2.1 Unclip", "SD 3", "SD 3.5", "SD 3.5 Large", "SD 3.5 Large Turbo",
+    "SD 3.5 Medium", "SDXL 0.9", "SDXL 1.0", "SDXL 1.0 LCM", "SDXL Lightning",
+    "SDXL Hyper", "SDXL Turbo", "SDXL Distilled", "Reve", "Muse Image",
+    "Seedream", "Upscaler", "Other", "Wan Image 2.7", "ZImageTurbo", "ZImageBase",
+    "Ming Image Design 0.1", "Ming Image Design Layer 0.1",
+)
+
+
+def normalise_base_models(value):
+    """Split and validate baseModels input, raising ValueError on junk.
+
+    Returns a list of accepted enum values, preserving the API's own order.
+    """
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        raw = [str(v).strip() for v in value]
+    else:
+        raw = [part.strip() for part in str(value).split(",")]
+
+    invalid = [v for v in raw if v and v not in BASE_MODEL_SET]
+    if invalid:
+        raise ValueError(
+            f"未知的 base model：{', '.join(invalid)}。"
+            "取值必须和 Civitai 完全一致（注意空格与大小写），例如 Krea 2 不是 krea2。"
+        )
+
+    chosen = {v for v in raw if v}
+    return [model for model in BASE_MODELS if model in chosen]
+
 
 class CivitaiError(Exception):
     """A non-retryable error returned by the Civitai API."""
@@ -74,12 +145,17 @@ def build_params(filters, with_meta=True):
         elif key == "type":
             params[key] = value if value in MEDIA_TYPES else "image"
         elif key in ("tags", "baseModels"):
-            if isinstance(value, (list, tuple, set)):
-                value = ",".join(str(v).strip() for v in value if str(v).strip())
+            if key == "baseModels":
+                models = normalise_base_models(value)
+                if models:
+                    params[key] = ",".join(models)
             else:
-                value = str(value).strip()
-            if value:
-                params[key] = value
+                if isinstance(value, (list, tuple, set)):
+                    value = ",".join(str(v).strip() for v in value if str(v).strip())
+                else:
+                    value = str(value).strip()
+                if value:
+                    params[key] = value
         elif key in ("modelId", "modelVersionId", "postId", "imageId", "userId", "browsingLevel"):
             params[key] = int(value)
         else:
@@ -107,9 +183,15 @@ def _headers(token):
     return headers
 
 
-async def fetch_images(session, filters, token=None, with_meta=True, max_retries=3, proxy=None):
-    """Fetch one page of images. Returns ``(items, next_cursor, next_page)``."""
-    params = build_params(filters, with_meta=with_meta)
+async def fetch_images(
+    session, filters, token=None, with_meta=True, max_retries=3, proxy=None, prepared=None
+):
+    """Fetch one page of images. Returns ``(items, next_cursor, next_page)``.
+
+    ``prepared`` lets a caller validate ``build_params`` up front so an invalid
+    filter surfaces as a clean 400 instead of a retry loop.
+    """
+    params = prepared if prepared is not None else build_params(filters, with_meta=with_meta)
     url = f"{API_ROOT}/images"
     last_error = None
 

@@ -52,7 +52,8 @@
           <input id="f-postId" type="number" placeholder="可选" />
         </label>
         <label>baseModels
-          <input id="f-baseModels" type="text" placeholder="SDXL 1.0, SD 1.5" />
+          <input id="f-bm-filter" type="text" placeholder="筛选 base model，可多选" />
+          <select id="f-baseModels" multiple size="7"></select>
         </label>
         <label>tags (id 逗号分隔)
           <input id="f-tags" type="text" placeholder="1234,5678" />
@@ -71,6 +72,8 @@
         <button id="btn-fetch" class="primary">拉取</button>
         <button id="btn-reset">重置（回到第一页）</button>
         <label class="inline"><input id="f-withMeta" type="checkbox" checked /> 带 metadata</label>
+        <label class="inline"><input id="f-bm-all" type="checkbox" /> 显示全部（含视频/音频/3D）</label>
+        <label class="inline"><input id="f-bm-none" type="checkbox" /> 清空 base model 选择</label>
       </div>
     </details>
 
