@@ -107,7 +107,7 @@ def _headers(token):
     return headers
 
 
-async def fetch_images(session, filters, token=None, with_meta=True, max_retries=3):
+async def fetch_images(session, filters, token=None, with_meta=True, max_retries=3, proxy=None):
     """Fetch one page of images. Returns ``(items, next_cursor, next_page)``."""
     params = build_params(filters, with_meta=with_meta)
     url = f"{API_ROOT}/images"
@@ -115,7 +115,9 @@ async def fetch_images(session, filters, token=None, with_meta=True, max_retries
 
     for attempt in range(max_retries):
         try:
-            async with session.get(url, params=params, headers=_headers(token)) as resp:
+            async with session.get(
+                url, params=params, headers=_headers(token), proxy=proxy
+            ) as resp:
                 if resp.status == 200:
                     body = await resp.json()
                     meta = body.get("metadata") or {}
@@ -161,3 +163,30 @@ def _error_message(payload):
 def new_session():
     timeout = aiohttp.ClientTimeout(total=60, connect=15)
     return aiohttp.ClientSession(timeout=timeout, raise_for_status=False)
+
+
+async def download(session, url, proxy=None, max_bytes=64 * 1024 * 1024):
+    """Fetch an image body, refusing anything larger than ``max_bytes``."""
+    async with session.get(url, proxy=proxy, allow_redirects=True) as resp:
+        if resp.status != 200:
+            raise CivitaiError(f"Download failed ({resp.status})", resp.status)
+
+        declared = resp.headers.get("Content-Length")
+        if declared and declared.isdigit() and int(declared) > max_bytes:
+            raise CivitaiError(f"Image too large: {int(declared) // 1024 // 1024} MB")
+
+        body = bytearray()
+        async for chunk in resp.content.iter_chunked(256 * 1024):
+            body.extend(chunk)
+            if len(body) > max_bytes:
+                raise CivitaiError("Image exceeded the size limit while downloading")
+
+        return bytes(body)
+
+
+def extension_for(url):
+    """Best-effort file extension from a Civitai CDN url."""
+    path = (url or "").split("?")[0]
+    suffix = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+    return suffix if suffix in ("jpg", "jpeg", "png", "webp", "gif", "avif") else "jpg"
+

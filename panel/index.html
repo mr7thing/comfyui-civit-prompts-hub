@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Civit Prompts Hub</title>
+<link rel="stylesheet" href="/cph/panel.css" />
+</head>
+<body>
+
+<header class="bar">
+  <h1>Civit Prompts Hub</h1>
+  <div class="bar-right">
+    <span id="status" class="status">就绪</span>
+    <span id="token-state" class="pill">token: 检测中</span>
+    <span id="proxy-state" class="pill">proxy: -</span>
+  </div>
+</header>
+
+<main>
+  <!-- ---------------- left: browse ---------------- -->
+  <section class="pane browse">
+    <details class="filters" open>
+      <summary>筛选</summary>
+      <div class="grid-form">
+        <label>sort
+          <select id="f-sort">
+            <option>Newest</option><option>Oldest</option>
+            <option>Most Reactions</option><option>Most Comments</option>
+            <option>Most Collected</option><option>Random</option>
+          </select>
+        </label>
+        <label>period
+          <select id="f-period">
+            <option>AllTime</option><option>Year</option>
+            <option>Month</option><option>Week</option><option>Day</option>
+          </select>
+        </label>
+        <label>limit
+          <input id="f-limit" type="number" min="1" max="200" value="50" />
+        </label>
+        <label>username
+          <input id="f-username" type="text" placeholder="留空 = 全部" />
+        </label>
+        <label>modelId
+          <input id="f-modelId" type="number" placeholder="可选" />
+        </label>
+        <label>modelVersionId
+          <input id="f-modelVersionId" type="number" placeholder="可选" />
+        </label>
+        <label>postId
+          <input id="f-postId" type="number" placeholder="可选" />
+        </label>
+        <label>baseModels
+          <input id="f-baseModels" type="text" placeholder="SDXL 1.0, SD 1.5" />
+        </label>
+        <label>tags (id 逗号分隔)
+          <input id="f-tags" type="text" placeholder="1234,5678" />
+        </label>
+        <label>browsingLevel
+          <input id="f-browsingLevel" type="number" placeholder="留空 = 默认" />
+        </label>
+        <label>type
+          <select id="f-type"><option>image</option><option>video</option></select>
+        </label>
+        <label class="wide">token（仅本次会话，不保存）
+          <input id="f-token" type="password" placeholder="可选" autocomplete="off" />
+        </label>
+      </div>
+      <div class="row">
+        <button id="btn-fetch" class="primary">拉取</button>
+        <button id="btn-reset">重置（回到第一页）</button>
+        <label class="inline"><input id="f-withMeta" type="checkbox" checked /> 带 metadata</label>
+      </div>
+    </details>
+
+    <div class="row">
+      <span id="count">已加载 0 张</span>
+      <button id="btn-select-all">全选已加载</button>
+      <button id="btn-select-none">清空选择</button>
+      <span id="selected-count" class="pill strong">已选 0</span>
+    </div>
+
+    <div id="grid" class="grid"></div>
+    <div id="sentinel" class="sentinel">向下滚动加载更多…</div>
+  </section>
+
+  <!-- ---------------- right: tasks ---------------- -->
+  <section class="pane tasks">
+    <details open>
+      <summary>保存 Civitai 原始素材</summary>
+      <div class="checks">
+        <label><input id="s-image" type="checkbox" checked /> 下载原图</label>
+        <label><input id="s-workflow" type="checkbox" checked /> 保存 workflow JSON</label>
+        <label><input id="s-meta" type="checkbox" checked /> 保存 metadata</label>
+        <label><input id="s-manifest" type="checkbox" checked /> 写 manifest.jsonl</label>
+      </div>
+      <div class="row">
+        <button id="btn-save">保存所选</button>
+        <span id="save-result" class="muted"></span>
+      </div>
+    </details>
+
+    <details open>
+      <summary>送入工作流节点</summary>
+      <div class="row">
+        <button id="btn-send" class="primary">写入 CPH Prompt List</button>
+        <span class="muted">需要画布里存在该节点</span>
+      </div>
+    </details>
+
+    <details open>
+      <summary>批量生成</summary>
+      <div class="grid-form">
+        <label>正向 CLIPTextEncode
+          <select id="t-positive"></select>
+        </label>
+        <label>负向 CLIPTextEncode
+          <select id="t-negative"></select>
+        </label>
+        <label>SaveImage 节点
+          <select id="t-save"></select>
+        </label>
+        <label>队列深度
+          <input id="t-depth" type="number" min="1" max="100" value="10" />
+        </label>
+        <label>输出子目录前缀
+          <input id="t-prefix" type="text" value="cph_runs" />
+        </label>
+      </div>
+      <div class="row">
+        <button id="btn-run" class="primary">开始执行</button>
+        <button id="btn-stop">停止追加</button>
+        <button id="btn-clear-queue">清空待发</button>
+      </div>
+      <div class="row">
+        <span id="run-state" class="status">未运行</span>
+        <span id="run-counts" class="muted">待发 0 · 进行 0 · 完成 0 · 失败 0</span>
+      </div>
+      <div id="run-log" class="log"></div>
+    </details>
+  </section>
+</main>
+
+<script src="/cph/panel.js"></script>
+</body>
+</html>
