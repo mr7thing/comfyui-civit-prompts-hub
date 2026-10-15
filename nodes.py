@@ -28,16 +28,45 @@ class CivitPromptList:
                     },
                 ),
                 "skip_empty_prompts": ("BOOLEAN", {"default": True}),
+                "index": (
+                    "INT",
+                    {
+                        "default": 0,
+                        "min": 0,
+                        "tooltip": "Which item feeds the single-value outputs.",
+                    },
+                ),
             }
         }
 
-    RETURN_TYPES = ("PROMPTS", "NEGATIVES", "SOURCE_IDS", "RECORDS", "SUMMARY")
-    RETURN_NAMES = ("prompts", "negatives", "source_ids", "records", "summary")
+    # ComfyUI matches on list-ness too, so a list STRING cannot feed a plain
+    # STRING widget. The *_single outputs are plain strings; the batch runner in
+    # the panel consumes the lists directly and does not need this node at all.
+    RETURN_TYPES = (
+        "STRING",
+        "STRING",
+        "STRING",
+        "PROMPTS",
+        "NEGATIVES",
+        "SOURCE_IDS",
+        "RECORDS",
+        "SUMMARY",
+    )
+    RETURN_NAMES = (
+        "prompt",
+        "negative",
+        "source_id",
+        "prompts",
+        "negatives",
+        "source_ids",
+        "records",
+        "summary",
+    )
     FUNCTION = "build"
     CATEGORY = "Civit Prompts Hub"
     DESCRIPTION = "Parse a Civitai image selection into prompts, negatives and source ids."
 
-    def build(self, selection_json, skip_empty_prompts=True):
+    def build(self, selection_json, skip_empty_prompts=True, index=0):
         raw = (selection_json or "").strip()
         try:
             items = json.loads(raw) if raw else []
@@ -55,7 +84,31 @@ class CivitPromptList:
         source_ids = [r["id"] for r in records]
         summary = _summarise(records)
 
-        return (prompts, negatives, source_ids, json.dumps(records, ensure_ascii=False), summary)
+        position = _clamp_index(index, len(records))
+        single_prompt = prompts[position] if position is not None else ""
+        single_negative = negatives[position] if position is not None else ""
+        single_id = source_ids[position] if position is not None else ""
+
+        return (
+            single_prompt,
+            single_negative,
+            single_id,
+            prompts,
+            negatives,
+            source_ids,
+            json.dumps(records, ensure_ascii=False),
+            summary,
+        )
+
+
+def _clamp_index(index, total):
+    if total == 0:
+        return None
+    try:
+        position = int(index)
+    except (TypeError, ValueError):
+        position = 0
+    return max(0, min(total - 1, position))
 
 
 def _summarise(records):
