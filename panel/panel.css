@@ -120,6 +120,64 @@ button.primary:hover:not(:disabled) { background: #245a9c; }
 .checks label, .inline { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 .inline { color: var(--muted); }
 
+/* Compact type-to-filter multi-select: a one-line trigger that expands into a
+   search box plus a scrollable checklist. */
+.pick-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  width: 100%;
+  margin: 2px 0 8px;
+}
+.pick { display: flex; align-items: center; gap: 6px; flex: 1 1 260px; min-width: 220px; }
+.pick-label { font-size: 11px; color: var(--muted); white-space: nowrap; }
+
+.multi { position: relative; flex: 1 1 auto; min-width: 0; }
+
+.multi-trigger {
+  width: 100%;
+  text-align: left;
+  font-size: 11px;
+  padding: 3px 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.multi-trigger.active { color: var(--accent); border-color: var(--accent); }
+
+.multi-panel {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 3px);
+  left: 0;
+  right: 0;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .55);
+  padding: 4px;
+}
+.multi-search {
+  width: 100%;
+  font-size: 11px;
+  padding: 3px 6px;
+  margin-bottom: 3px;
+}
+.multi-list { max-height: 190px; overflow: auto; }
+.multi-item {
+  font-size: 11px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.multi-item:hover { background: #23272e; }
+.multi-item.selected { color: var(--accent); }
+.multi-item.selected::before { content: "✓ "; }
+.multi-empty { font-size: 11px; color: var(--muted); padding: 4px 6px; }
+
 select[multiple] {
   padding: 2px;
   font-size: 11px;

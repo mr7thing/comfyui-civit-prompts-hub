@@ -30,6 +30,133 @@ const runner = {
 };
 
 /* ------------------------------------------------------------------ */
+/* compact multi-select with type-to-filter                            */
+/* ------------------------------------------------------------------ */
+
+function createMultiSelect(host, { placeholder = "全部", onChange } = {}) {
+  const state = { options: [], selected: new Set(), filtered: [] };
+
+  const trigger = document.createElement("button");
+  trigger.type = "button";
+  trigger.className = "multi-trigger";
+
+  const panel = document.createElement("div");
+  panel.className = "multi-panel";
+  panel.hidden = true;
+
+  const search = document.createElement("input");
+  search.type = "text";
+  search.className = "multi-search";
+  search.placeholder = "输入以过滤…";
+
+  const list = document.createElement("div");
+  list.className = "multi-list";
+
+  panel.append(search, list);
+  host.append(trigger, panel);
+
+  function label() {
+    if (!state.selected.size) return placeholder;
+    if (state.selected.size === 1) return [...state.selected][0];
+    return `${state.selected.size} 项已选`;
+  }
+
+  function paintTrigger() {
+    trigger.textContent = label();
+    trigger.title = [...state.selected].join(", ");
+    trigger.classList.toggle("active", state.selected.size > 0);
+  }
+
+  function paintList() {
+    list.textContent = "";
+    if (!state.filtered.length) {
+      const empty = document.createElement("div");
+      empty.className = "multi-empty";
+      empty.textContent = state.options.length ? "（无匹配）" : "（加载中…）";
+      list.appendChild(empty);
+      return;
+    }
+    for (const option of state.filtered) {
+      const row = document.createElement("div");
+      row.className = "multi-item" + (state.selected.has(option) ? " selected" : "");
+      row.textContent = option;
+      row.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (state.selected.has(option)) state.selected.delete(option);
+        else state.selected.add(option);
+        paintTrigger();
+        paintList();
+        onChange?.([...state.selected]);
+      });
+      list.appendChild(row);
+    }
+  }
+
+  function filter(text) {
+    const needle = text.trim().toLowerCase();
+    state.filtered = needle
+      ? state.options.filter((o) => o.toLowerCase().includes(needle))
+      : state.options;
+    paintList();
+  }
+
+  function open() {
+    panel.hidden = false;
+    filter(search.value);
+    search.focus();
+  }
+
+  function close() {
+    panel.hidden = true;
+  }
+
+  trigger.addEventListener("click", (event) => {
+    event.stopPropagation();
+    panel.hidden ? open() : close();
+  });
+  search.addEventListener("input", () => filter(search.value));
+  search.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") close();
+  });
+  document.addEventListener("click", (event) => {
+    if (!panel.hidden && !host.contains(event.target)) close();
+  });
+
+  paintTrigger();
+
+  return {
+    setOptions(options) {
+      state.options = options;
+      // Drop selections the new option list cannot offer, so a filter can never
+      // disappear from the request behind the user's back.
+      for (const value of [...state.selected]) {
+        if (!options.includes(value)) state.selected.delete(value);
+      }
+      paintTrigger();
+      if (!panel.hidden) filter(search.value);
+    },
+    clearSelection() {
+      state.selected.clear();
+      search.value = "";
+      paintTrigger();
+      if (!panel.hidden) filter("");
+      onChange?.([]);
+    },
+    getSelected: () => [...state.selected],
+    isOpen: () => !panel.hidden,
+  };
+}
+
+const baseModelPicker = createMultiSelect($("f-baseModels"), {
+  placeholder: "base model：全部",
+  onChange: () => log(`base model 选择：${baseModelPicker.getSelected().join(", ") || "（全部）"}`),
+});
+const tagPicker = createMultiSelect($("f-tags"), {
+  placeholder: "tags：全部",
+  onChange: () => log(`tag 选择：${tagPicker.getSelected().join(", ") || "（全部）"}`),
+});
+
+/* ------------------------------------------------------------------ */
 /* helpers                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -56,8 +183,8 @@ async function postJSON(path, body) {
 }
 
 function readFilters() {
-  const baseModels = [...$("f-baseModels").selectedOptions].map((o) => o.value);
-  const tagNames = [...$("f-tags").selectedOptions].map((o) => o.value);
+  const baseModels = baseModelPicker.getSelected();
+  const tagNames = tagPicker.getSelected();
   const f = {
     sort: $("f-sort").value,
     period: $("f-period").value,
@@ -77,6 +204,7 @@ function readFilters() {
   return f;
 }
 
+
 async function resolveTagIds(names) {
   const data = await postJSON("/cph/tags/resolve", { names });
   if (data.unresolved?.length) {
@@ -91,7 +219,12 @@ async function resolveTagIds(names) {
 /* base model picker                                                  */
 /* ------------------------------------------------------------------ */
 
-const baseModelState = { all: [], image: [], selected: new Set() };
+const baseModelState = { all: [], image: [] };
+
+
+/* ------------------------------------------------------------------ */
+/* picker data                                                        */
+/* ------------------------------------------------------------------ */
 
 async function initBaseModels() {
   try {
@@ -99,42 +232,43 @@ async function initBaseModels() {
     const data = await res.json();
     baseModelState.all = data.all || [];
     baseModelState.image = data.image || [];
-    renderBaseModels("");
+    refreshBaseModelOptions();
   } catch (error) {
-    $("f-baseModels").innerHTML = '<option>（无法加载 base model 列表）</option>';
+    setStatus(`base model 列表加载失败：${error.message}`);
   }
 }
 
-function renderBaseModels(filterText) {
-  const select = $("f-baseModels");
-  const showAll = $("f-bm-all").checked;
-  const pool = showAll ? baseModelState.all : baseModelState.image;
-  const needle = filterText.trim().toLowerCase();
+function refreshBaseModelOptions() {
+  baseModelPicker.setOptions(
+    $("f-bm-all").checked ? baseModelState.all : baseModelState.image
+  );
+}
 
-  const matches = pool.filter((m) => !needle || m.toLowerCase().includes(needle));
+const tagState = { pool: [], timer: null };
 
-  // Keep only the options still in the pool; a hidden selection would silently
-  // disappear from the request.
-  for (const value of [...baseModelState.selected]) {
-    if (!pool.includes(value)) baseModelState.selected.delete(value);
+async function initTags() {
+  try {
+    const res = await fetch("/cph/tags?query=");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    tagState.pool = (data.tags || []).map((t) => t.name);
+    tagPicker.setOptions(tagState.pool);
+  } catch (error) {
+    setStatus(`标签列表加载失败：${error.message}`);
   }
+}
 
-  select.textContent = "";
-  if (!matches.length) {
-    const empty = document.createElement("option");
-    empty.textContent = "（无匹配）";
-    empty.disabled = true;
-    select.appendChild(empty);
+function searchTags(query) {
+  const needle = query.trim().toLowerCase();
+  if (!needle) {
+    tagPicker.setOptions(tagState.pool);
     return;
   }
-  for (const model of matches) {
-    const option = document.createElement("option");
-    option.value = model;
-    option.textContent = model;
-    option.selected = baseModelState.selected.has(model);
-    select.appendChild(option);
-  }
+  // The API's fuzzy search is very noisy, so filtering the loaded names is
+  // both faster and more predictable.
+  tagPicker.setOptions(tagState.pool.filter((name) => name.toLowerCase().includes(needle)));
 }
+
 
 
 /* ------------------------------------------------------------------ */
@@ -302,60 +436,6 @@ function updateSentinel() {
 
 function selectedItems() {
   return state.items.filter((item) => state.selected.has(item.id));
-}
-
-/* ------------------------------------------------------------------ */
-/* tag picker                                                         */
-/* ------------------------------------------------------------------ */
-
-const tagState = { pool: [], selected: new Set(), timer: null };
-
-async function searchTags() {
-  const query = $("f-tag-filter").value.trim();
-  try {
-    const params = new URLSearchParams({ query });
-    const res = await fetch(`/cph/tags?${params}`);
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-
-    tagState.pool = data.tags.map((t) => t.name);
-    renderTags(query);
-  } catch (error) {
-    $("f-tags").textContent = "";
-    const option = document.createElement("option");
-    option.textContent = `加载失败：${error.message}`;
-    option.disabled = true;
-    $("f-tags").appendChild(option);
-  }
-}
-
-function renderTags(filterText) {
-  const select = $("f-tags");
-  const needle = filterText.trim().toLowerCase();
-  const matches = needle
-    ? tagState.pool.filter((name) => name.toLowerCase().includes(needle))
-    : tagState.pool;
-
-  // A selection filtered out of the list would vanish from the request.
-  for (const name of [...tagState.selected]) {
-    if (!tagState.pool.includes(name)) tagState.selected.delete(name);
-  }
-
-  select.textContent = "";
-  if (!matches.length) {
-    const empty = document.createElement("option");
-    empty.textContent = needle ? "（无匹配）" : "（输入关键词搜索标签）";
-    empty.disabled = true;
-    select.appendChild(empty);
-    return;
-  }
-  for (const name of matches) {
-    const option = document.createElement("option");
-    option.value = name;
-    option.textContent = name;
-    option.selected = tagState.selected.has(name);
-    select.appendChild(option);
-  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -824,30 +904,11 @@ async function saveToken(action) {
 }
 
 function init() {
-  $("f-bm-filter").addEventListener("input", (event) => {
-    renderBaseModels(event.target.value);
-  });
-  // Tag search hits the API, so debounce instead of firing per keystroke.
-  $("f-tag-filter").addEventListener("input", () => {
-    clearTimeout(tagState.timer);
-    tagState.timer = setTimeout(searchTags, 350);
-  });
-  $("f-tags").addEventListener("change", (event) => {
-    tagState.selected = new Set([...event.target.selectedOptions].map((o) => o.value));
-  });
-  $("f-bm-all").addEventListener("change", () => {
-    renderBaseModels($("f-bm-filter").value);
-  });
+  $("f-bm-all").addEventListener("change", refreshBaseModelOptions);
   $("f-bm-none").addEventListener("change", (event) => {
     if (!event.target.checked) return;
-    baseModelState.selected.clear();
-    renderBaseModels($("f-bm-filter").value);
+    baseModelPicker.clearSelection();
     event.target.checked = false;
-  });
-  $("f-baseModels").addEventListener("change", (event) => {
-    baseModelState.selected = new Set(
-      [...event.target.selectedOptions].map((o) => o.value)
-    );
   });
 
   $("btn-fetch").addEventListener("click", () => fetchPage(true));
@@ -904,7 +965,7 @@ function init() {
 
   initConfig();
   initBaseModels();
-  searchTags();
+  initTags();
   fetchPage(true);
   loadWorkflow(true);
   setInterval(() => loadWorkflow(false), 5000);

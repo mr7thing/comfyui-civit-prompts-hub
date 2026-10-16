@@ -57,33 +57,21 @@
         <label>browsingLevel
           <input id="f-browsingLevel" type="number" placeholder="留空 = 默认" />
         </label>
-        <label class="half">baseModels
-          <input id="f-bm-filter" type="text" placeholder="过滤，可多选" />
-          <select id="f-baseModels" multiple size="6"></select>
-        </label>
-        <label class="half">tags
-          <input id="f-tag-filter" type="text" placeholder="搜索标签，如 pony" />
-          <select id="f-tags" multiple size="6"></select>
-        </label>
+        <div class="pick-row">
+          <div class="pick">
+            <span class="pick-label">baseModels</span>
+            <div id="f-baseModels" class="multi"></div>
+          </div>
+          <div class="pick">
+            <span class="pick-label">tags</span>
+            <div id="f-tags" class="multi"></div>
+          </div>
+        </div>
       </div>
       <div class="row">
-        <button id="btn-fetch" class="primary">拉取</button>
-        <button id="btn-reset">重置（回到第一页）</button>
         <label class="inline"><input id="f-withMeta" type="checkbox" checked /> 带 metadata</label>
-        <label class="inline"><input id="f-bm-all" type="checkbox" /> 显示全部（含视频/音频/3D）</label>
-        <label class="inline"><input id="f-bm-none" type="checkbox" /> 清空 base model 选择</label>
-      </div>
-    </details>
-
-    <details>
-      <summary>token（浏览 Civitai 用）</summary>
-      <div class="grid-form">
-        <label class="half">token
-          <input id="f-token" type="password" placeholder="可选，仅本次会话生效" autocomplete="off" />
-        </label>
-      </div>
-      <div class="row">
-        <span class="muted">不填则用配置文件里的 token；都没有时按公开等级浏览。</span>
+        <label class="inline"><input id="f-bm-all" type="checkbox" /> base model 显示全部（含视频/音频/3D）</label>
+        <label class="inline"><input id="f-bm-none" type="checkbox" /> 清空 base model</label>
       </div>
     </details>
 
@@ -129,8 +117,17 @@
         </label>
       </div>
       <div class="row">
+        <button id="btn-fetch" class="primary">拉取</button>
+        <button id="btn-reset">重置（回到第一页）</button>
+      </div>
+      <div class="row">
         <button id="btn-proxy-save">保存代理设置</button>
         <span id="proxy-detected" class="muted"></span>
+      </div>
+      <div class="grid-form">
+        <label class="half">token（临时，只在本次会话生效）
+          <input id="f-token" type="password" placeholder="留空则用配置文件里的 token" autocomplete="off" />
+        </label>
       </div>
       <div class="row">
         <button id="btn-token-save">把 token 写入配置文件</button>
