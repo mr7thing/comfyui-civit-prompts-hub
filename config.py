@@ -213,8 +213,46 @@ def public_state():
     }
 
 
+PENDING_QUEUE_PATH = Path(__file__).parent / "pending_queue.json"
+
+
+def load_pending_queue():
+    """The queue the panel left behind last time, if any."""
+    if not PENDING_QUEUE_PATH.is_file():
+        return {"pending": [], "queued": []}
+    try:
+        data = json.loads(PENDING_QUEUE_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"pending": [], "queued": []}
+    if not isinstance(data, dict):
+        return {"pending": [], "queued": []}
+    return {
+        "pending": [e for e in (data.get("pending") or []) if isinstance(e, dict)],
+        "queued": data.get("queued") or [],
+    }
+
+
+def save_pending_queue(pending, queued):
+    payload = {"pending": pending, "queued": list(queued), "savedAt": _now()}
+    PENDING_QUEUE_PATH.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return len(pending)
+
+
+def clear_pending_queue():
+    if PENDING_QUEUE_PATH.is_file():
+        PENDING_QUEUE_PATH.unlink()
+
+
+def _now():
+    import time
+
+    return time.strftime("%Y-%m-%dT%H:%M:%S")
+
+
 def env_proxies():
-    """Proxy variables visible to this process, with credentials removed."""
+
     found = {}
     for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
         value = os.environ.get(name)

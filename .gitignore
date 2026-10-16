@@ -13,3 +13,6 @@ refs/
 
 # holds the API token and proxy settings
 config.json
+
+# the panel's staged queue from the previous session
+pending_queue.json

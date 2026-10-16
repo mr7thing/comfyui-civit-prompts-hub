@@ -186,6 +186,26 @@ def _shrink(body, target_width):
 
 
 
+async def get_pending_queue(request):
+    """The queue left behind by a previous panel session."""
+    return web.json_response(config.load_pending_queue())
+
+
+async def post_pending_queue(request):
+    body, bad = await _json_or_error(request)
+    if bad:
+        return bad
+    count = config.save_pending_queue(
+        body.get("pending") or [], body.get("queued") or []
+    )
+    return web.json_response({"saved": count})
+
+
+async def delete_pending_queue(request):
+    config.clear_pending_queue()
+    return web.json_response({"cleared": True})
+
+
 async def get_saved(request):
     """Ids whose originals are already on disk, for batch de-duplication."""
     found = saver.saved_ids()
@@ -418,6 +438,10 @@ def register():
     routes.get("/cph/base-models")(get_base_models)
     routes.get("/cph/whoami")(get_whoami)
     routes.get("/cph/saved")(get_saved)
+    routes.get("/cph/queue")(get_pending_queue)
+    routes.post("/cph/queue")(post_pending_queue)
+    routes.delete("/cph/queue")(delete_pending_queue)
+
 
 
     routes.get("/cph/image")(get_image)

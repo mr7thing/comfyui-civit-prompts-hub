@@ -1061,7 +1061,12 @@ function renderWorkflowLock() {
 
 async function enqueueSelected() {
   const ids = new Set(state.selected);
-  if (!ids.size) { setStatus("没有选中任何图"); return; }
+  if (!ids.size) {
+    // With nothing selected, this button still runs what is already staged.
+    if (runner.pending.length && !runner.running) { start(); return; }
+    setStatus("没有选中任何图");
+    return;
+  }
 
   const picked = state.items.filter((item) => ids.has(item.id));
   let entries = (await parsedItems(ids)).filter((e) => e.prompt.trim());
@@ -1096,8 +1101,41 @@ async function enqueueSelected() {
   runner.pending.push(...entries);
   runner.queued = new Set([...runner.queued, ...entries.map((e) => e.id)]);
   updateCounts();
+  persistQueue();
   if (!runner.running) start();
   setStatus(`已加入待发队列 ${entries.length} 条`);
+}
+
+/** Mirror the pending queue to disk so a closed tab does not lose it. */
+async function persistQueue() {
+  try {
+    await fetch("/cph/queue", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pending: runner.pending, queued: [...runner.queued] }),
+    });
+  } catch (error) {
+    log(`暂存队列写入失败：${error.message}`, "err");
+  }
+}
+
+/** Pick up the queue a previous session left behind. */
+async function restoreQueue() {
+  try {
+    const res = await fetch("/cph/queue");
+    const data = await res.json();
+    const pending = data.pending || [];
+    if (!pending.length) return;
+
+    runner.pending.push(...pending);
+    runner.queued = new Set([...(data.queued || []), ...pending.map((e) => e.id)]);
+    pending.forEach((entry) => state.parsed.set(entry.id, entry));
+    updateCounts();
+    log(`已恢复上次暂存的 ${pending.length} 条待发队列，点「开始执行」即可继续`, "ok");
+    setStatus(`已恢复 ${pending.length} 条待发队列`);
+  } catch (error) {
+    log(`暂存队列读取失败：${error.message}`, "err");
+  }
 }
 
 /** Reload the "already saved" index after a save, so a later run skips them. */
@@ -1172,6 +1210,7 @@ async function pump() {
   if (runner.running && !runner.pending.length && !runner.inflight.size) {
     stop();
     $("run-state").textContent = "完成";
+    persistQueue();
     log(`全部结束：成功 ${runner.done}，失败 ${runner.failed}`, "ok");
   }
 }
@@ -1380,6 +1419,7 @@ function init() {
     // session. Anything already submitted stays claimed.
     runner.queued = new Set([...runner.inflight.values()].map((e) => e.id));
     updateCounts();
+    persistQueue();
     if (dropped) log(`已清空待发队列 ${dropped} 条（这些 ID 可以重新添加）`);
   });
 
@@ -1407,6 +1447,7 @@ function init() {
   initBaseModels();
   initTags();
   refreshSavedIndex();
+  restoreQueue();
   fetchPage(true);
 
   loadWorkflow(true);
