@@ -77,6 +77,51 @@ def _unique(path):
     return path.with_name(f"{path.stem}_{int(time.time())}{path.suffix}")
 
 
+RUN_PREFIX = "civitai"
+INDEX_NAME = "index.jsonl"
+
+
+
+def saved_index_path():
+    return output_root() / RUN_PREFIX / INDEX_NAME
+
+
+def saved_ids():
+    """Every id saved so far, across all runs.
+
+    The batch runner uses this to skip images whose originals are already on
+    disk, so a repeated batch does not regenerate the same things.
+    """
+    path = saved_index_path()
+    if not path.is_file():
+        return {}
+
+    found = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if entry.get("id") is not None:
+            found[str(entry["id"])] = {
+                "name": entry.get("name"),
+                "runId": entry.get("runId"),
+                "savedAt": entry.get("savedAt"),
+                "dir": entry.get("dir"),
+            }
+    return found
+
+
+def _append_index(entry):
+    path = saved_index_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
 async def save_items(items, options, run_id=None, token=None, proxy=None):
     """Download and/or write the selected items.
 
@@ -96,10 +141,11 @@ async def save_items(items, options, run_id=None, token=None, proxy=None):
         "manifest": bool(options.get("manifest", True)),
     }
 
-    run_dir = output_root() / "civitai" / run_id
+    run_dir = output_root() / RUN_PREFIX / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
     entries = []
+
     errors = []
     manifest_path = run_dir / "manifest.jsonl"
 
@@ -158,7 +204,19 @@ async def save_items(items, options, run_id=None, token=None, proxy=None):
                 with manifest_path.open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
+            # The global index is what the batch runner consults to avoid
+            # re-processing an image whose original is already on disk.
+            _append_index({
+                "id": parsed["id"],
+                "name": parsed["name"],
+                "runId": run_id,
+                "dir": str(run_dir),
+                "savedAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "prompt": parsed["prompt"][:200],
+            })
+
             entries.append(entry)
+
 
     return {
         "run_id": run_id,

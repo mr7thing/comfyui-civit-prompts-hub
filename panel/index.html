@@ -215,6 +215,10 @@
         <button id="btn-relock">重新锁定基础工作流</button>
       </div>
       <div class="row">
+        <label class="inline"><input id="t-skip-saved" type="checkbox" checked /> 跳过已保存过的 ID（<span id="t-saved-count">加载中</span>）</label>
+        <label class="inline"><input id="t-dedupe" type="checkbox" checked /> 同批次内自动去重</label>
+      </div>
+      <div class="row">
         <span id="t-base" class="muted">基础工作流：未锁定（开始执行时自动锁定当前画布）</span>
       </div>
       <div class="row">

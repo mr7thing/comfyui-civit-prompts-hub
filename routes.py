@@ -186,6 +186,12 @@ def _shrink(body, target_width):
 
 
 
+async def get_saved(request):
+    """Ids whose originals are already on disk, for batch de-duplication."""
+    found = saver.saved_ids()
+    return web.json_response({"count": len(found), "items": found})
+
+
 async def get_whoami(request):
     """Validate the token and report which account it belongs to."""
     token = request.query.get("token") or config.get_token()
@@ -411,6 +417,8 @@ def register():
     routes.post("/cph/config")(post_config)
     routes.get("/cph/base-models")(get_base_models)
     routes.get("/cph/whoami")(get_whoami)
+    routes.get("/cph/saved")(get_saved)
+
 
     routes.get("/cph/image")(get_image)
     routes.get("/cph/tags")(get_tags)

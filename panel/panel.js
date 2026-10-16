@@ -32,6 +32,7 @@ const state = {
   workflow: null,
   workflowAge: null,
   config: null,
+  saved: new Map(),    // civitai id -> { name, runId, savedAt }
 };
 
 const runner = {
@@ -45,6 +46,7 @@ const runner = {
   pollTimer: null,
   base: null,          // frozen copy of the workflow this batch runs against
   baseLockedAt: null,
+  queued: new Set(),   // ids already queued this run, so appends cannot duplicate
 };
 
 /* ------------------------------------------------------------------ */
@@ -779,6 +781,9 @@ async function saveSelection() {
     const failed = result.errors?.length || 0;
     $("save-result").textContent = `${result.dir}（${result.entries.length} 条${failed ? `，${failed} 失败` : ""}）`;
     log(`保存完成 → ${result.dir}`, "ok");
+    // Newly saved ids must not be handed back to the batch runner.
+    await refreshSavedIndex();
+
   } catch (error) {
     $("save-result").textContent = `失败：${error.message}`;
     log(`保存失败：${error.message}`, "err");
@@ -1059,15 +1064,54 @@ async function enqueueSelected() {
   if (!ids.size) { setStatus("没有选中任何图"); return; }
 
   const picked = state.items.filter((item) => ids.has(item.id));
-  const entries = (await parsedItems(ids)).filter((e) => e.prompt.trim());
-  const skipped = picked.length - entries.length;
-  if (skipped) log(`${skipped} 条没有 prompt，已跳过`);
+  let entries = (await parsedItems(ids)).filter((e) => e.prompt.trim());
+
+  const withoutPrompt = picked.length - entries.length;
+  if (withoutPrompt) log(`${withoutPrompt} 条没有 prompt，已跳过`, "err");
+
+  // Appends must not re-run what is already queued or in flight.
+  if ($("t-dedupe").checked) {
+    const seen = new Set();
+    entries = entries.filter((entry) => {
+      if (runner.queued.has(entry.id) || seen.has(entry.id)) return false;
+      seen.add(entry.id);
+      return true;
+    });
+  }
+
+  if ($("t-skip-saved").checked && state.saved.size) {
+    const kept = entries.filter((entry) => !state.saved.has(String(entry.id)));
+    const dropped = entries.length - kept.length;
+    if (dropped) {
+      log(`${dropped} 条已保存过原始素材，按设置跳过（取消勾选可重新生成）`);
+      entries = kept;
+    }
+  }
+
+  if (!entries.length) {
+    setStatus("没有需要执行的新条目");
+    return;
+  }
 
   runner.pending.push(...entries);
+  runner.queued = new Set([...runner.queued, ...entries.map((e) => e.id)]);
   updateCounts();
   if (!runner.running) start();
   setStatus(`已加入待发队列 ${entries.length} 条`);
 }
+
+/** Reload the "already saved" index after a save, so a later run skips them. */
+async function refreshSavedIndex() {
+  try {
+    const res = await fetch("/cph/saved");
+    const data = await res.json();
+    state.saved = new Map(Object.entries(data.items || {}));
+    $("t-saved-count").textContent = `${data.count || 0} 条`;
+  } catch (error) {
+    $("t-saved-count").textContent = "读取失败";
+  }
+}
+
 
 function start() {
   if (runner.running) return;
@@ -1330,9 +1374,15 @@ function init() {
   $("btn-run").addEventListener("click", enqueueSelected);
   $("btn-stop").addEventListener("click", stop);
   $("btn-clear-queue").addEventListener("click", () => {
+    const dropped = runner.pending.length;
     runner.pending = [];
+    // Release their ids too, otherwise they could never be queued again this
+    // session. Anything already submitted stays claimed.
+    runner.queued = new Set([...runner.inflight.values()].map((e) => e.id));
     updateCounts();
+    if (dropped) log(`已清空待发队列 ${dropped} 条（这些 ID 可以重新添加）`);
   });
+
   $("btn-relock").addEventListener("click", () => {
     if (lockWorkflow()) {
       renderWorkflowLock();
@@ -1356,7 +1406,9 @@ function init() {
   initConfig();
   initBaseModels();
   initTags();
+  refreshSavedIndex();
   fetchPage(true);
+
   loadWorkflow(true);
   setInterval(() => loadWorkflow(false), 5000);
 }
