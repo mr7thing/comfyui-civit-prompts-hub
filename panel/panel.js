@@ -770,23 +770,113 @@ async function loadWorkflow(force) {
 function populateNodePickers() {
   const api = state.workflow || {};
   const clips = [];
+  const negatives = [];
   const saves = [];
+  const seeds = [];
+
   for (const [nodeId, node] of Object.entries(api)) {
     const type = node.class_type || "";
+    const inputs = node.inputs || {};
+
     if (type === "CLIPTextEncode") {
-      const text = typeof node.inputs?.text === "string" ? node.inputs.text : "";
-      clips.push({ id: nodeId, text });
-    } else if (type === "SaveImage") {
-      saves.push({ id: nodeId, text: node.inputs?.filename_prefix || "" });
+      clips.push({ id: nodeId, text: describeValue(inputs.text) });
+    }
+    // Many workflows zero out the positive conditioning instead of encoding a
+    // real negative, so it is a valid negative target too.
+    if (type === "ConditioningZeroOut" || type === "ConditioningCombine") {
+      negatives.push({ id: nodeId, text: `（${type}）` });
+    }
+    if (type === "SaveImage") {
+      saves.push({ id: nodeId, text: describeValue(inputs.filename_prefix), linked: isLink(inputs.filename_prefix) });
+    }
+    if (SAMPLER_TYPES.has(type)) {
+      for (const key of SEED_KEYS) {
+        if (typeof inputs[key] === "number") {
+          seeds.push({ id: nodeId, key, text: `${key}=${inputs[key]}` });
+          break;
+        }
+      }
     }
   }
 
   fillSelect("t-positive", clips, 0);
-  fillSelect("t-negative", clips, 1);
+  fillSelect("t-negative", dedupeById(negatives, clips), 0);
   fillSelect("t-save", saves, 0);
+  fillSelect("t-seed", seeds, 0);
 
-  if (!clips.length) setStatus("当前工作流里没有 CLIPTextEncode 节点");
+  const cph = firstNodeOfType(api, "CivitPromptList");
+  $("t-inject").value = cph ? "cph" : clips.length ? "clip" : "";
+
+  renderInjectionPlan();
+
+  if (!clips.length && !cph) setStatus("当前工作流里没有 CLIPTextEncode 或 CivitPromptList 节点");
   else if (!saves.length) log("提示：当前工作流里没有 SaveImage 节点，新图不会落盘", "err");
+}
+
+const SAMPLER_TYPES = new Set([
+  "KSampler", "KSamplerAdvanced", "SamplerCustomAdvanced", "RandomNoise",
+  "BasicScheduler", "KSamplerSelect", "SeedControl",
+]);
+const SEED_KEYS = ["seed", "noise_seed"];
+
+/** A ComfyUI link is `[nodeId, slotIndex]`; a literal value is anything else. */
+function isLink(value) {
+  return Array.isArray(value) && value.length === 2 && !Number.isNaN(Number(value[0]));
+}
+
+function describeValue(value) {
+  if (isLink(value)) return `← 连线 #${value[0]}`;
+  return typeof value === "string" ? value : "";
+}
+
+function firstNodeOfType(api, classType) {
+  const hit = Object.entries(api).find(([, n]) => n.class_type === classType);
+  return hit ? hit[0] : "";
+}
+
+/** Explain, in the panel, exactly what each queued run will do. */
+function renderInjectionPlan() {
+  const el = $("t-plan");
+  if (!el) return;
+  const api = state.workflow || {};
+  const mode = $("t-inject").value;
+  const parts = [];
+
+  if (mode === "cph") {
+    parts.push(`每条队列项写入 #${firstNodeOfType(api, "CivitPromptList")}.selection_json（单条，index=0）`);
+  } else if (mode === "clip") {
+    parts.push(`每条队列项改写 #${$("t-positive").value} 的 text`);
+  } else {
+    parts.push("未找到可注入的节点");
+  }
+
+  const negativeId = $("t-negative").value;
+  if (negativeId) parts.push(`负向 → #${negativeId}`);
+
+  const seedId = $("t-seed").value;
+  if (seedId && $("t-vary-seed").checked) parts.push(`每条换种子 #${seedId}`);
+
+  const saveId = $("t-save").value;
+  if (saveId) {
+    const linked = isLink(api[saveId]?.inputs?.filename_prefix);
+    parts.push(linked ? `文件名沿用工作流连线 #${saveId}` : `文件名 → #${saveId} 覆写`);
+  }
+
+  el.textContent = parts.join(" · ");
+}
+
+
+function dedupeById(...lists) {
+  const seen = new Set();
+  const out = [];
+  for (const list of lists) {
+    for (const item of list) {
+      if (seen.has(item.id)) continue;
+      seen.add(item.id);
+      out.push(item);
+    }
+  }
+  return out;
 }
 
 function fillSelect(id, options, defaultIndex) {
@@ -836,18 +926,61 @@ function buildPrompt(entry, index) {
   // canvas mid-run cannot change the graph halfway through.
   const base = runner.base || state.workflow;
   const prompt = JSON.parse(JSON.stringify(base));
-  const positiveId = $("t-positive").value;
-  const negativeId = $("t-negative").value;
-  const saveId = $("t-save").value;
+  const mode = $("t-inject").value;
 
-  if (positiveId && prompt[positiveId]) prompt[positiveId].inputs.text = entry.prompt || "";
-  if (negativeId && prompt[negativeId]) prompt[negativeId].inputs.text = entry.negative || "";
+  if (mode === "cph") {
+    // Feeding the plugin node keeps the workflow's own switches intact: when
+    // the refine switch is on, the prompt still goes through the enhancer.
+    const nodeId = firstNodeOfType(prompt, "CivitPromptList");
+    if (nodeId) {
+      prompt[nodeId].inputs.selection_json = JSON.stringify([civitaiItemFor(entry)]);
+      prompt[nodeId].inputs.index = 0;
+    }
+  } else if (mode === "clip") {
+    const positiveId = $("t-positive").value;
+    const negativeId = $("t-negative").value;
+    if (positiveId && prompt[positiveId]) prompt[positiveId].inputs.text = entry.prompt || "";
+    if (negativeId && prompt[negativeId]) {
+      const inputs = prompt[negativeId].inputs || {};
+      // ConditioningZeroOut has no text input; the negative prompt has nowhere
+      // to go there, so only fill nodes that actually take text.
+      if ("text" in inputs) inputs.text = entry.negative || "";
+    }
+  }
+
+  // A fixed seed plus a fixed prompt produces byte-identical images, so every
+  // queued item gets its own seed when the workflow exposes one.
+  const seedId = $("t-seed").value;
+  if (seedId && $("t-vary-seed").checked && prompt[seedId]) {
+    const key = Object.keys(prompt[seedId].inputs || {}).find(
+      (k) => SEED_KEYS.includes(k) && typeof prompt[seedId].inputs[k] === "number"
+    );
+    if (key) prompt[seedId].inputs[key] = (Date.now() % 2147483647) + index * 7919;
+  }
+
+  const saveId = $("t-save").value;
   if (saveId && prompt[saveId]) {
-    const prefix = $("t-prefix").value.trim() || "cph_runs";
-    prompt[saveId].inputs.filename_prefix = `${prefix}/${currentRunId()}/${entry.name}_${String(index).padStart(4, "0")}`;
+    const current = prompt[saveId].inputs?.filename_prefix;
+    // A wired prefix already points at the plugin's source id; overwriting it
+    // would break the link back to the Civitai image.
+    if (!isLink(current)) {
+      const prefix = $("t-prefix").value.trim() || "cph_runs";
+      prompt[saveId].inputs.filename_prefix =
+        `${prefix}/${currentRunId()}/${entry.name}_${String(index).padStart(4, "0")}`;
+    }
   }
   return prompt;
 }
+
+/** The plugin node parses this back into prompt / negative / source id. */
+function civitaiItemFor(entry) {
+  return {
+    id: entry.id ?? 0,
+    hash: "",
+    meta: { prompt: entry.prompt || "", negativePrompt: entry.negative || "" },
+  };
+}
+
 
 function lockWorkflow() {
   if (!state.workflow) return false;
@@ -900,16 +1033,21 @@ async function enqueueSelected() {
 function start() {
   if (runner.running) return;
   if (!state.workflow) { setStatus("还没有工作流，请先在 ComfyUI 里打开/编辑工作流"); return; }
-  if (!$("t-positive").value) { setStatus("请选择正向 CLIPTextEncode 节点"); return; }
+
+  const mode = $("t-inject").value;
+  if (!mode) { setStatus("没有可注入 prompt 的节点，请确认工作流里有 CivitPromptList 或 CLIPTextEncode"); return; }
+  if (mode === "clip" && !$("t-positive").value) { setStatus("请选择正向 CLIPTextEncode 节点"); return; }
 
   // Freeze the current canvas workflow for this whole batch.
   lockWorkflow();
 
   runner.running = true;
   $("run-state").textContent = "运行中";
+  log(`开始：${$("t-plan").textContent}`);
   pump();
   runner.pollTimer = setInterval(pollQueue, 1000);
 }
+
 
 function stop() {
   runner.running = false;
@@ -938,7 +1076,9 @@ async function pump() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
       runner.inflight.set(data.prompt_id, entry);
-      log(`提交 #${data.prompt_id} ← ${entry.name}`);
+      const preview = (entry.prompt || "").replace(/\s+/g, " ").slice(0, 46);
+      log(`队列#${data.number}  源图#${entry.id}  ${preview}`);
+
     } catch (error) {
       runner.failed += 1;
       log(`提交失败 ${entry.name}: ${error.message}`, "err");
@@ -1108,6 +1248,10 @@ function init() {
   $("n-proxy-enabled").checked = true;
   $("n-browser-mode").checked = isBrowserMode();
   renderModeDetail();
+
+  for (const id of ["t-inject", "t-positive", "t-negative", "t-save", "t-seed", "t-vary-seed"]) {
+    $(id).addEventListener("change", renderInjectionPlan);
+  }
 
   $("btn-fetch").addEventListener("click", () => fetchPage(true));
   $("banner-retry").addEventListener("click", () => {

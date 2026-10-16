@@ -165,14 +165,24 @@
     <details open>
       <summary>批量生成</summary>
       <div class="grid-form">
+        <label>注入方式
+          <select id="t-inject">
+            <option value="">（自动检测）</option>
+            <option value="cph">CivitPromptList 节点（保留工作流开关逻辑）</option>
+            <option value="clip">直接改写 CLIPTextEncode.text</option>
+          </select>
+        </label>
         <label>正向 CLIPTextEncode
           <select id="t-positive"></select>
         </label>
-        <label>负向 CLIPTextEncode
+        <label>负向节点
           <select id="t-negative"></select>
         </label>
         <label>SaveImage 节点
           <select id="t-save"></select>
+        </label>
+        <label>种子节点
+          <select id="t-seed"></select>
         </label>
         <label>队列深度
           <input id="t-depth" type="number" min="1" max="100" value="10" />
@@ -180,6 +190,12 @@
         <label>输出子目录前缀
           <input id="t-prefix" type="text" value="cph_runs" />
         </label>
+      </div>
+      <div class="row">
+        <label class="inline"><input id="t-vary-seed" type="checkbox" checked /> 每条队列项换不同种子（否则图会完全重复）</label>
+      </div>
+      <div class="row">
+        <span id="t-plan" class="muted">批量执行方式：等待画布工作流同步…</span>
       </div>
       <div class="row">
         <button id="btn-run" class="primary">开始执行</button>
