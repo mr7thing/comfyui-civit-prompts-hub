@@ -320,19 +320,20 @@ async def tool_run_batch(plugin, args):
             "插件的页面桥接会把当前工作流同步过来。"
         )
 
-    prompts = list(args.get("prompts") or [])
+    # (prompt, civitai source id or None)
+    entries = [(p.strip(), None) for p in (args.get("prompts") or []) if p and p.strip()]
     if args.get("imageIds"):
         items = await fetch_by_ids(plugin, args["imageIds"])
-        prompts.extend(r["prompt"] for r in plugin.meta.parse_selection(items) if r["prompt"].strip())
+        for record in plugin.meta.parse_selection(items):
+            if record["prompt"].strip():
+                entries.append((record["prompt"].strip(), record["id"]))
 
-    prompts = [p for p in prompts if p and p.strip()]
-    if not prompts:
+    if not entries:
         raise ValueError("没有可用的 prompt")
 
     batch_size = max(1, min(8, int(args.get("batchSize", 1))))
     prefix = args.get("filenamePrefix", "cph_mcp")
 
-    # The workflow feeds prompts through our CivitPromptList node.
     prompt_node = next(
         (nid for nid, n in workflow.items() if n.get("class_type") == "CivitPromptList"), None
     )
@@ -342,17 +343,27 @@ async def tool_run_batch(plugin, args):
     if not prompt_node:
         raise ValueError("当前工作流里没有 CivitPromptList 节点，无法批量注入 prompt")
 
+    # If the workflow already wires filename_prefix to the CivitPromptList
+    # source_id, leave it alone so generated files stay traceable to the Civitai
+    # image without us having to guess a naming scheme.
+    prefix_is_linked = bool(
+        save_node and isinstance(workflow[save_node]["inputs"].get("filename_prefix"), list)
+    )
+
     submitted = []
-    for index, text in enumerate(prompts):
+    for index, (text, source_id) in enumerate(entries):
         for repeat in range(batch_size):
             graph = copy.deepcopy(workflow)
-            raw = {"id": 0, "hash": "", "meta": {"prompt": text}}
+            raw = {
+                "id": source_id if source_id is not None else f"mcp{index:04d}",
+                "hash": "",
+                "meta": {"prompt": text},
+            }
             graph[prompt_node]["inputs"]["selection_json"] = json.dumps([raw], ensure_ascii=False)
             graph[prompt_node]["inputs"]["index"] = 0
-            if save_node:
-                graph[save_node]["inputs"]["filename_prefix"] = (
-                    f"{prefix}/{index:04d}_{repeat}"
-                )
+            if save_node and not prefix_is_linked:
+                label = source_id if source_id is not None else f"{index:04d}_{repeat}"
+                graph[save_node]["inputs"]["filename_prefix"] = f"{prefix}/{label}"
 
             payload = json.dumps({"prompt": graph, "client_id": "cph-mcp"}).encode("utf-8")
             request = urllib.request.Request(
@@ -364,12 +375,24 @@ async def tool_run_batch(plugin, args):
             try:
                 with urllib.request.urlopen(request, timeout=60) as resp:
                     result = json.loads(resp.read().decode("utf-8"))
-                submitted.append({"prompt_id": result["prompt_id"], "number": result["number"]})
+                submitted.append({
+                    "prompt_id": result["prompt_id"],
+                    "number": result["number"],
+                    "sourceId": source_id,
+                })
             except urllib.error.HTTPError as exc:
                 detail = exc.read().decode("utf-8", "replace")[:200]
-                submitted.append({"error": f"HTTP {exc.code}: {detail}"})
+                submitted.append({
+                    "error": f"HTTP {exc.code}: {detail}",
+                    "sourceId": source_id,
+                })
 
-    return {"submitted": len(submitted), "results": submitted}
+    return {
+        "submitted": len(submitted),
+        "filenamePrefixFromWorkflow": prefix_is_linked,
+        "results": submitted,
+    }
+
 
 
 HANDLERS = {
