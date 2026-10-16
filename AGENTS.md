@@ -31,6 +31,25 @@ C:\Users\dream\AppData\Local\Comfy-Desktop\ComfyUI-Installs\Comfyui\ComfyUI\.ven
 node --check <file>.mjs
 ```
 
+### ComfyUI Desktop 只是 GUI 启动器
+
+Desktop 是个 Electron 外壳，真正的服务是 venv 里那个 python 进程。
+**要让插件重新加载，只需要重启后端，不需要动 Desktop。**
+
+后端原始启动方式（参数取自 `%APPDATA%\Comfy Desktop\logs\app.log` 和 `installations.json`）：
+
+```
+cd C:\Users\dream\AppData\Local\Comfy-Desktop\ComfyUI-Installs\Comfyui
+.\ComfyUI\.venv\Scripts\python.exe -s ComfyUI\main.py --feature-flag show_sig --enable-manager --listen 0.0.0.0
+```
+
+注意：
+- 一定要用 `.venv` 里那个解释器，用系统 python 起不来
+- 工作目录是 `Comfyui`（不是 `ComfyUI`），因为参数里是相对路径 `ComfyUI\main.py`
+- 启动很慢（要加载全部 custom_nodes），8188 通常 60 秒后才监听，别急着判失败
+- 后端可以脱离 Desktop 独立运行，直接用浏览器开 `http://127.0.0.1:8188`
+- 如果此时再打开 Desktop，它可能抢 8188 端口导致冲突
+
 ## 本机网络环境（务必先读，已踩过坑）
 
 这台机器**没有直连外网**，任何出网请求都必须走本地代理。
