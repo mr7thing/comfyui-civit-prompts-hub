@@ -12,6 +12,7 @@ Pagination notes that matter here:
 
 import asyncio
 import re
+from contextlib import asynccontextmanager
 
 import aiohttp
 
@@ -243,6 +244,30 @@ def _error_message(payload):
     return None
 
 
+@asynccontextmanager
+async def get(session, url, params=None, headers=None, proxy=None, retries=3):
+    """GET with retries that always surfaces failures as CivitaiError.
+
+    Without this, a proxy hiccup escapes as an aiohttp exception and the route
+    answers 500 instead of a readable 502.
+    """
+    last = None
+    for attempt in range(retries):
+        try:
+            async with session.get(
+                url, params=params, headers=headers, proxy=proxy
+            ) as response:
+                yield response
+            return
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+            last = exc
+            if attempt < retries - 1:
+                await asyncio.sleep(min(2 ** attempt, 5))
+
+    raise CivitaiError(f"Network error: {last}")
+
+
+
 def new_session():
     timeout = aiohttp.ClientTimeout(total=60, connect=15)
     return aiohttp.ClientSession(timeout=timeout, raise_for_status=False)
@@ -254,12 +279,14 @@ async def search_models(session, query, token=None, proxy=None, limit=20):
     if not query:
         return []
 
-    async with session.get(
+    async with get(
+        session,
         f"{API_ROOT}/models",
         params={"query": query, "limit": max(1, min(50, int(limit or 20)))},
         headers=_headers(token),
         proxy=proxy,
     ) as resp:
+
         if resp.status == 200:
             body = await resp.json()
             return [
@@ -282,7 +309,8 @@ async def search_models(session, query, token=None, proxy=None, limit=20):
 async def model_versions(session, model_id, token=None, proxy=None):
     """Versions of one model. The list endpoint does not embed them, so this
     is fetched on demand rather than for every search hit."""
-    async with session.get(
+    async with get(
+        session,
         f"{API_ROOT}/models/{int(model_id)}",
         headers=_headers(token),
         proxy=proxy,
@@ -298,6 +326,7 @@ async def model_versions(session, model_id, token=None, proxy=None):
                     "file": _primary_file(version),
                 }
                 for version in body.get("modelVersions") or []
+                if isinstance(version, dict)
             ]
 
         payload = await resp.json(content_type=None)
@@ -321,7 +350,8 @@ _TAG_ID_PATTERN = re.compile(r'"id":(\d+),"name":"([^"]+)"')
 async def search_tags(session, query, proxy=None, limit=200):
     """Tag names matching a fragment. Ids are not exposed by this endpoint."""
     query = (query or "").strip()
-    async with session.get(
+    async with get(
+        session,
         f"{API_ROOT}/tags",
         params={"query": query, "limit": max(1, min(1000, int(limit or 200)))},
         headers={"Accept": "application/json"},
@@ -334,9 +364,10 @@ async def search_tags(session, query, proxy=None, limit=200):
         body = await resp.json(content_type=None)
         return [
             {"name": item.get("name")}
-            for item in body.get("items") or []
-            if item.get("name")
+            for item in (body.get("items") or [])
+            if isinstance(item, dict) and item.get("name")
         ]
+
 
 
 async def resolve_tag_ids(session, names, proxy=None):
@@ -352,10 +383,12 @@ async def resolve_tag_ids(session, names, proxy=None):
         name = str(name).strip()
         if not name:
             continue
-        async with session.get(
+        async with get(
+            session,
             f"https://civitai.com/tag/{name}",
             headers={"User-Agent": "Mozilla/5.0", "Accept": "text/html"},
             proxy=proxy,
+            retries=2,
         ) as resp:
             html = await resp.text()
 
@@ -376,9 +409,10 @@ async def resolve_tag_ids(session, names, proxy=None):
 
 async def download(session, url, proxy=None, max_bytes=64 * 1024 * 1024):
     """Fetch an image body, refusing anything larger than ``max_bytes``."""
-    async with session.get(url, proxy=proxy, allow_redirects=True) as resp:
+    async with get(session, url, proxy=proxy, retries=2) as resp:
         if resp.status != 200:
             raise CivitaiError(f"Download failed ({resp.status})", resp.status)
+
 
         declared = resp.headers.get("Content-Length")
         if declared and declared.isdigit() and int(declared) > max_bytes:

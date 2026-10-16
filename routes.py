@@ -25,6 +25,15 @@ def _json_error(message, status=400):
     return web.json_response({"error": message}, status=status)
 
 
+def _error(exc):
+    """Turn a CivitaiError into a response, pointing at the proxy when relevant."""
+    message = str(exc)
+    if "Network error" in message and config.get_proxy():
+        message += "（代理可能断了，检查面板里的代理设置）"
+    return _json_error(message, getattr(exc, "status", None) or 502)
+
+
+
 async def _body(request):
     try:
         return await request.json()
@@ -158,8 +167,9 @@ async def get_tags(request):
         try:
             tags = await civitai.search_tags(session, query, proxy=config.get_proxy())
         except civitai.CivitaiError as exc:
-            return _json_error(str(exc), exc.status or 502)
+            return _error(str(exc))
     return web.json_response({"tags": tags})
+
 
 
 async def post_resolve_tags(request):
@@ -172,7 +182,7 @@ async def post_resolve_tags(request):
                 session, names, proxy=config.get_proxy()
             )
         except civitai.CivitaiError as exc:
-            return _json_error(str(exc), exc.status or 502)
+            return _error(exc)
     return web.json_response({"ids": mapping, "unresolved": unresolved})
 
 
@@ -201,7 +211,7 @@ async def get_models(request):
                 session, query, token=token, proxy=config.get_proxy()
             )
         except civitai.CivitaiError as exc:
-            return _json_error(str(exc), exc.status or 502)
+            return _error(exc)
     return web.json_response({"models": models})
 
 
@@ -217,7 +227,7 @@ async def get_model_versions(request):
                 session, int(raw), token=config.get_token(), proxy=config.get_proxy()
             )
         except civitai.CivitaiError as exc:
-            return _json_error(str(exc), exc.status or 502)
+            return _error(exc)
     return web.json_response({"versions": versions})
 
 
