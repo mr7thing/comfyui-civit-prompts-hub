@@ -207,7 +207,7 @@ function renderModeDetail() {
   const el = $("mode-detail");
   if (!el) return;
   el.textContent = isBrowserMode()
-    ? "当前：浏览器直连。浏览和预览走浏览器自己的代理，服务端只在保存原图和标签 ID 解析时参与。"
+    ? "当前：浏览器直连。图库、标签、模型搜索和图片预览全部由浏览器直接访问 Civitai，走浏览器自己的代理；只有「保存原图」和「标签 ID 解析」仍需服务端。"
     : "当前：服务端代理。改动代理地址无需重启 ComfyUI，保存后立即生效。";
 }
 
@@ -233,6 +233,31 @@ function filtersToQuery(filters, withMeta) {
   if (filters.tags?.length) params.set("tags", filters.tags.join(","));
   return params;
 }
+
+/**
+ * GET a Civitai JSON endpoint through whichever path is active.
+ * The API sends `access-control-allow-origin: *`, so in browser mode the
+ * browser can read these directly and the server is bypassed entirely.
+ */
+async function civitaiGet(path, params, token) {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params || {})) {
+    if (value === undefined || value === null || value === "") continue;
+    search.set(key, String(value));
+  }
+  const used = token || $("f-token").value.trim();
+  if (used) search.set("token", used);
+
+  const headers = { Accept: "application/json" };
+  if (used && isBrowserMode()) headers.Authorization = `Bearer ${used}`;
+
+  const base = isBrowserMode() ? CIVITAI_API : "/cph";
+  const res = await fetch(`${base}${path}?${search}`, { headers });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(shortApiError(body) || `HTTP ${res.status}`);
+  return body;
+}
+
 
 /** Fetch a page of images through whichever path is active. */
 async function fetchImagePage(filters, withMeta) {
@@ -335,6 +360,8 @@ function readFilters() {
 
 
 async function resolveTagIds(names) {
+  // The numeric ids only exist inside the tag page's HTML, and that page sends
+  // no CORS header, so this one step always goes through the server.
   const data = await postJSON("/cph/tags/resolve", { names });
   if (data.unresolved?.length) {
     // Never silently drop a tag: an ignored filter would look like it applied.
@@ -381,10 +408,8 @@ const tagState = { pool: [], timer: null };
 
 async function initTags() {
   try {
-    const res = await fetch("/cph/tags?query=");
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-    tagState.pool = (data.tags || []).map((t) => t.name);
+    const data = await civitaiGet("/tags", { query: "", limit: 200 });
+    tagState.pool = (data.tags || data.items || []).map((t) => t.name).filter(Boolean);
     tagPicker.setOptions(tagState.pool);
   } catch (error) {
     if (isNetworkFailure(error.message)) {
@@ -581,6 +606,13 @@ function selectedItems() {
   return state.items.filter((item) => state.selected.has(item.id));
 }
 
+/** The server route flattens this to `file`; a direct API call keeps `files`. */
+function primaryFileName(version) {
+  const files = version?.files || [];
+  const primary = files.find((f) => f?.primary) || files[0];
+  return primary?.name || "";
+}
+
 /* ------------------------------------------------------------------ */
 /* model lookup                                                       */
 /* ------------------------------------------------------------------ */
@@ -594,17 +626,15 @@ async function searchModels() {
   $("m-search").disabled = true;
 
   try {
-    const params = new URLSearchParams({ query, token: $("f-token").value.trim() });
-    const res = await fetch(`/cph/models?${params}`);
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    const data = await civitaiGet("/models", { query, limit: 20 });
+    const models = data.models || data.items || [];
 
     results.textContent = "";
-    if (!data.models.length) {
+    if (!models.length) {
       results.textContent = "没有匹配的模型";
       return;
     }
-    for (const model of data.models) {
+    for (const model of models) {
       results.appendChild(modelRow(model));
     }
   } catch (error) {
@@ -644,16 +674,15 @@ async function loadVersions(model) {
   list.textContent = "加载中…";
 
   try {
-    const res = await fetch(`/cph/models/${model.id}/versions`);
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    const data = await civitaiGet(`/models/${model.id}`, {});
+    const versions = data.versions || data.modelVersions || [];
 
     list.textContent = "";
-    if (!data.versions.length) {
+    if (!versions.length) {
       list.textContent = "该模型没有版本数据";
       return;
     }
-    for (const version of data.versions) {
+    for (const version of versions) {
       const row = document.createElement("div");
       row.className = "m-item";
 
@@ -669,7 +698,7 @@ async function loadVersions(model) {
       const tag = document.createElement("span");
       tag.className = "m-tag";
       tag.textContent = version.baseModel || "";
-      tag.title = version.file || "";
+      tag.title = version.file || primaryFileName(version) || "";
 
       row.append(pick, tag);
       list.appendChild(row);
