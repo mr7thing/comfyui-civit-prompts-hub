@@ -195,4 +195,29 @@ def public_state():
         "proxy_detected": detected_proxy(),
         "proxy_enabled": cfg.get("proxy_enabled", True),
         "proxy_configured": cfg.get("proxy"),
+        # Other components inside this process (ComfyUI-Manager, ComfyUI's own
+        # requests) read these too, and aiohttp honours them via trust_env, so
+        # a wrong scheme here breaks them the same way it breaks us.
+        "env_proxies": env_proxies(),
     }
+
+
+def env_proxies():
+    """Proxy variables visible to this process, with credentials removed."""
+    found = {}
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        value = os.environ.get(name)
+        if value:
+            found[name] = _redact_credentials(value)
+    return found
+
+
+def _redact_credentials(value):
+    if "@" not in value:
+        return value
+    scheme, _, rest = value.partition("://")
+    if not scheme or scheme == value:
+        return "<含凭据，已隐藏>"
+    _, _, host = rest.rpartition("@")
+    return f"{scheme}://<凭据已隐藏>@{host}"
+

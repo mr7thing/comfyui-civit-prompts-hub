@@ -1030,6 +1030,15 @@ async function initConfig() {
         data.proxy_configured.replace(/^https:\/\//, "") === data.proxy_detected.replace(/^https:\/\//, "")) {
       $("proxy-detected").textContent += "（注意：配置的地址协议可能不对）";
     }
+
+    const env = data.env_proxies || {};
+    const envNames = Object.keys(env);
+    if (envNames.length) {
+      log(`进程内代理环境变量：${envNames.map((k) => `${k}=${env[k]}`).join("  ")}`);
+      if (envNames.some((k) => env[k].startsWith("https://"))) {
+        showBanner("进程内存在 https:// 开头的代理环境变量，aiohttp 会去和代理做 TLS 握手，这会让部分组件连不上。");
+      }
+    }
     updateProxyBadge(data.proxy);
   } catch (error) {
     /* ignore */
