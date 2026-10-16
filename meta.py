@@ -98,6 +98,13 @@ def parse_image(record):
     needed for naming and manifest linkage.
     """
     meta = record.get("meta") or {}
+
+    # A lookup by imageId comes back as {"id": ..., "meta": {...}}; the real
+    # metadata is one level deeper there.
+    nested = meta.get("meta")
+    if isinstance(nested, dict) and "prompt" not in meta:
+        meta = nested
+
     workflow, kind = parse_workflow(meta)
 
     prompt = meta.get("prompt")

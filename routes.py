@@ -5,6 +5,8 @@ issues and without the API token ever leaving the server process.
 """
 
 import asyncio
+import json
+import sys
 import time
 from pathlib import Path
 
@@ -21,6 +23,10 @@ PREVIEW_WIDTH = 480
 _state = {"workflow": None, "selection": None, "updated": 0}
 
 
+class MalformedBody(Exception):
+    """The request body could not be parsed."""
+
+
 def _json_error(message, status=400):
     return web.json_response({"error": message}, status=status)
 
@@ -33,12 +39,28 @@ def _error(exc):
     return _json_error(message, getattr(exc, "status", None) or 502)
 
 
-
 async def _body(request):
-    try:
-        return await request.json()
-    except ValueError:
+    """Parse the JSON body, or report that it was unusable.
+
+    Swallowing a malformed body used to look exactly like "the filter did not
+    apply", which hides real bugs. Fail loudly instead.
+    """
+    raw = await request.read()
+    if not raw:
         return {}
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError) as exc:
+        print(f"[cph] rejected malformed JSON body: {exc} | {raw[:200]!r}", file=sys.stderr)
+        raise MalformedBody(f"请求体不是合法 JSON：{exc}") from exc
+
+
+async def _json_or_error(request):
+    """``(body, error_response)`` — exactly one of the two is None."""
+    try:
+        return await _body(request), None
+    except MalformedBody as exc:
+        return None, _json_error(str(exc), 400)
 
 
 # --------------------------------------------------------------------------- #
@@ -65,7 +87,9 @@ async def get_panel_asset(request):
 # --------------------------------------------------------------------------- #
 
 async def get_config(request):
-    body = await _body(request)
+    body, bad = await _json_or_error(request)
+    if bad:
+        return bad
     state = config.public_state()
     if body.get("token"):
         state["session_token"] = True
@@ -74,7 +98,9 @@ async def get_config(request):
 
 async def post_config(request):
     """Persist the settings chosen in the panel."""
-    body = await _body(request)
+    body, bad = await _json_or_error(request)
+    if bad:
+        return bad
     if "proxyEnabled" in body or "proxyUrl" in body:
         enabled = body.get("proxyEnabled")
         if not isinstance(enabled, bool):
@@ -174,7 +200,9 @@ async def get_tags(request):
 
 async def post_resolve_tags(request):
     """Names -> numeric ids, since /images only accepts ids."""
-    body = await _body(request)
+    body, bad = await _json_or_error(request)
+    if bad:
+        return bad
     names = body.get("names") or []
     async with civitai.new_session() as session:
         try:
@@ -232,7 +260,9 @@ async def get_model_versions(request):
 
 
 async def post_images(request):
-    body = await _body(request)
+    body, bad = await _json_or_error(request)
+    if bad:
+        return bad
     filters = body.get("filters") or {}
     with_meta = bool(body.get("withMeta", True))
     # a token typed into the panel wins for this request only
@@ -273,7 +303,9 @@ async def post_images(request):
 
 async def post_workflow(request):
     """Called by the page extension with the current graph in API format."""
-    body = await _body(request)
+    body, bad = await _json_or_error(request)
+    if bad:
+        return bad
     _state["workflow"] = body.get("workflow")
     _state["updated"] = time.time()
     return web.json_response({"ok": True})
@@ -291,7 +323,9 @@ async def get_workflow(request):
 
 async def post_selection(request):
     """The panel hands its selection here; the extension writes it into a node."""
-    body = await _body(request)
+    body, bad = await _json_or_error(request)
+    if bad:
+        return bad
     _state["selection"] = body.get("items") or []
     _state["updated"] = time.time()
     return web.json_response({"ok": True, "count": len(_state["selection"])})
@@ -307,7 +341,9 @@ async def get_selection(request):
 
 async def post_parse(request):
     """Normalise raw items server-side so the panel does not re-implement rules."""
-    body = await _body(request)
+    body, bad = await _json_or_error(request)
+    if bad:
+        return bad
     parsed = meta.parse_selection(body.get("items") or [])
     return web.json_response(
         {
@@ -327,7 +363,9 @@ async def post_parse(request):
 
 
 async def post_save(request):
-    body = await _body(request)
+    body, bad = await _json_or_error(request)
+    if bad:
+        return bad
     items = body.get("items") or []
     if not items:
         return _json_error("No items to save", 400)
