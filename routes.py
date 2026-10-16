@@ -186,6 +186,17 @@ def _shrink(body, target_width):
 
 
 
+async def get_whoami(request):
+    """Validate the token and report which account it belongs to."""
+    token = request.query.get("token") or config.get_token()
+    async with civitai.new_session() as session:
+        try:
+            info = await civitai.whoami(session, token, proxy=config.get_proxy())
+        except civitai.CivitaiError as exc:
+            return _error(exc)
+    return web.json_response(info)
+
+
 async def get_tags(request):
     """Tag names for the picker. The API exposes no tag ids here."""
     query = request.query.get("query", "")
@@ -399,6 +410,8 @@ def register():
     routes.get("/cph/config")(get_config)
     routes.post("/cph/config")(post_config)
     routes.get("/cph/base-models")(get_base_models)
+    routes.get("/cph/whoami")(get_whoami)
+
     routes.get("/cph/image")(get_image)
     routes.get("/cph/tags")(get_tags)
     routes.post("/cph/tags/resolve")(post_resolve_tags)

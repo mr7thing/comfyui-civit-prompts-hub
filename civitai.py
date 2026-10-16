@@ -410,6 +410,33 @@ async def resolve_tag_ids(session, names, proxy=None):
 
 
 
+async def whoami(session, token, proxy=None):
+    """Validate the token and report the account behind it.
+
+    /api/v1/images ignores Authorization entirely, so the token cannot be
+    checked there; this is the endpoint that actually verifies it.
+    """
+    if not token:
+        return {"ok": False, "reason": "未配置 token"}
+
+    async with get(
+        session, f"{API_ROOT}/me", headers=_headers(token), proxy=proxy, retries=2
+    ) as resp:
+        if resp.status == 401:
+            return {"ok": False, "reason": "token 无效或已失效（401）"}
+        if resp.status != 200:
+            return {"ok": False, "reason": f"HTTP {resp.status}"}
+        body = await resp.json(content_type=None)
+
+    return {
+        "ok": True,
+        "username": body.get("username"),
+        "status": body.get("status"),
+        "isMember": body.get("isMember"),
+        "subscriptions": [s.get("type") for s in (body.get("subscriptions") or [])],
+    }
+
+
 async def download(session, url, proxy=None, max_bytes=64 * 1024 * 1024):
     """Fetch an image body, refusing anything larger than ``max_bytes``."""
     async with get(session, url, proxy=proxy, retries=2) as resp:

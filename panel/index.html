@@ -55,6 +55,14 @@
         <label>modelVersionId
           <input id="f-modelVersionId" type="number" placeholder="可选" />
         </label>
+        <label>内容等级 (browsingLevel)
+          <select id="f-level">
+            <option value="1">None — 仅安全内容</option>
+            <option value="3">Soft — 含 Soft</option>
+            <option value="7">Mature — 含 Mature</option>
+            <option value="15">X — 全部</option>
+          </select>
+        </label>
         <label>postId
           <input id="f-postId" type="number" placeholder="可选" />
         </label>
@@ -72,10 +80,13 @@
       <div class="row">
         <button id="btn-fetch" class="primary">拉取</button>
         <button id="btn-reset">重置（回到第一页）</button>
-        <label class="inline"><input id="f-sfw" type="checkbox" checked /> 仅 SFW（browsingLevel=1；关掉则用 Civitai 默认等级）</label>
         <label class="inline"><input id="f-withMeta" type="checkbox" checked /> 带 metadata</label>
         <label class="inline"><input id="f-bm-all" type="checkbox" /> base model 显示全部（含视频/音频/3D）</label>
         <label class="inline"><input id="f-bm-none" type="checkbox" /> 清空 base model</label>
+      </div>
+      <div class="row">
+        <button id="btn-whoami">检测 token</button>
+        <span id="whoami-result" class="muted"></span>
       </div>
     </details>
 

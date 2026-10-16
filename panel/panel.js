@@ -31,6 +31,7 @@ const state = {
   userScrolled: false,
   workflow: null,
   workflowAge: null,
+  config: null,
 };
 
 const runner = {
@@ -206,10 +207,49 @@ function setMode(mode) {
 function renderModeDetail() {
   const el = $("mode-detail");
   if (!el) return;
-  el.textContent = isBrowserMode()
-    ? "当前：浏览器直连。图库、标签、模型搜索和图片预览全部由浏览器直接访问 Civitai，走浏览器自己的代理；只有「保存原图」和「标签 ID 解析」仍需服务端。"
-    : "当前：服务端代理。改动代理地址无需重启 ComfyUI，保存后立即生效。";
+
+  const bits = [];
+  if (isBrowserMode()) {
+    bits.push("当前：浏览器直连。图库、标签、模型搜索和图片预览由浏览器直接访问 Civitai，走浏览器自己的代理；只有「保存原图」和「标签 ID 解析」仍需服务端。");
+  } else {
+    bits.push("当前：服务端代理。改动代理地址无需重启 ComfyUI，保存后立即生效。");
+  }
+
+  const info = state.config || {};
+  if (info.has_token) {
+    bits.push(`token：已配置（${info.token_source === "env" ? "环境变量" : "config.json"}）`);
+  } else {
+    bits.push("token：未配置，按匿名公开等级浏览");
+  }
+  if (info.browsing_level) {
+    bits.push(`账号浏览等级：${info.browsing_level}（实际可见内容以此为上限，选 Mature/X 也不会更高）`);
+  }
+
+  el.textContent = bits.join(" ");
 }
+
+/** Ask the server to validate the token and report which account it belongs to. */
+async function checkToken() {
+  const result = $("whoami-result");
+  result.textContent = "检测中…";
+  try {
+    const params = new URLSearchParams({ token: $("f-token").value.trim() });
+    const res = await fetch(`/cph/whoami?${params}`);
+    const data = await res.json();
+    if (data.ok) {
+      result.textContent =
+        `token 有效 · 账号 ${data.username}（${data.status}）` +
+        `${data.isMember ? " · 会员" : " · 非会员"}`;
+      log(`token 有效：${data.username}`, "ok");
+    } else {
+      result.textContent = `token 无效：${data.reason}`;
+      log(`token 无效：${data.reason}`, "err");
+    }
+  } catch (error) {
+    result.textContent = `检测失败：${error.message}`;
+  }
+}
+
 
 /** Query-string builder mirroring what the server route does server-side. */
 function filtersToQuery(filters, withMeta) {
@@ -348,10 +388,9 @@ function readFilters() {
     modelId: $("f-modelId").value.trim(),
     modelVersionId: $("f-modelVersionId").value.trim(),
     postId: $("f-postId").value.trim(),
+    // browsingLevel is a bitmask: 1 = None, 3 = +Soft, 7 = +Mature, 15 = +X.
+    browsingLevel: Number($("f-level").value) || 1,
   };
-  // browsingLevel is a bitmask: 1 = None only, 3 = +Soft, 5 = +Mature.
-  // Sending nothing leaves Civitai on its own default browsing level.
-  if ($("f-sfw").checked) f.browsingLevel = 1;
   if (baseModels.length) f.baseModels = baseModels;
   if (tagNames.length) f.tagNames = tagNames;
   for (const key of Object.keys(f)) {
@@ -1155,6 +1194,7 @@ async function initConfig() {
       body: JSON.stringify({}),
     });
     const data = await res.json();
+    state.config = data;
     $("token-state").textContent = data.has_token ? "token: 已配置" : "token: 未配置（公开等级）";
     $("token-detail").textContent = data.has_token
       ? `config.json 里有 token（来源：${data.token_source || "file"}）`
@@ -1283,6 +1323,8 @@ function init() {
   $("btn-send").addEventListener("click", sendSelection);
   $("btn-save").addEventListener("click", saveSelection);
   $("btn-proxy-save").addEventListener("click", saveProxySettings);
+  $("btn-whoami").addEventListener("click", checkToken);
+
   $("btn-token-save").addEventListener("click", () => saveToken("save"));
   $("btn-token-clear").addEventListener("click", () => saveToken("clear"));
   $("btn-run").addEventListener("click", enqueueSelected);
