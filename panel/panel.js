@@ -348,8 +348,10 @@ function readFilters() {
     modelId: $("f-modelId").value.trim(),
     modelVersionId: $("f-modelVersionId").value.trim(),
     postId: $("f-postId").value.trim(),
-    browsingLevel: $("f-browsingLevel").value.trim(),
   };
+  // browsingLevel is a bitmask: 1 = None only, 3 = +Soft, 5 = +Mature.
+  // Sending nothing leaves Civitai on its own default browsing level.
+  if ($("f-sfw").checked) f.browsingLevel = 1;
   if (baseModels.length) f.baseModels = baseModels;
   if (tagNames.length) f.tagNames = tagNames;
   for (const key of Object.keys(f)) {

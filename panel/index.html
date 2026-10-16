@@ -30,15 +30,14 @@
       <div class="grid-form">
         <label>sort
           <select id="f-sort">
-            <option>Newest</option><option>Oldest</option>
-            <option>Most Reactions</option><option>Most Comments</option>
-            <option>Most Collected</option><option>Random</option>
+            <option>Most Reactions</option><option>Newest</option><option>Oldest</option>
+            <option>Most Comments</option><option>Most Collected</option><option>Random</option>
           </select>
         </label>
         <label>period
           <select id="f-period">
-            <option>AllTime</option><option>Year</option>
-            <option>Month</option><option>Week</option><option>Day</option>
+            <option>Month</option><option>Day</option><option>Week</option>
+            <option>Year</option><option>AllTime</option>
           </select>
         </label>
         <label>limit
@@ -59,9 +58,6 @@
         <label>postId
           <input id="f-postId" type="number" placeholder="可选" />
         </label>
-        <label>browsingLevel
-          <input id="f-browsingLevel" type="number" placeholder="留空 = 默认" />
-        </label>
         <div class="pick-row">
           <div class="pick">
             <span class="pick-label">baseModels</span>
@@ -76,6 +72,7 @@
       <div class="row">
         <button id="btn-fetch" class="primary">拉取</button>
         <button id="btn-reset">重置（回到第一页）</button>
+        <label class="inline"><input id="f-sfw" type="checkbox" checked /> 仅 SFW（browsingLevel=1；关掉则用 Civitai 默认等级）</label>
         <label class="inline"><input id="f-withMeta" type="checkbox" checked /> 带 metadata</label>
         <label class="inline"><input id="f-bm-all" type="checkbox" /> base model 显示全部（含视频/音频/3D）</label>
         <label class="inline"><input id="f-bm-none" type="checkbox" /> 清空 base model</label>
