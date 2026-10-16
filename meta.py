@@ -33,13 +33,20 @@ def _maybe_json(value):
 def parse_workflow(meta):
     """Return (workflow, kind) where kind is one of:
 
-    ``comfyui``  UI-format graph (dict with ``nodes``)
-    ``a1111``    A1111 PNG-info wrapper (dict with ``prompt``/``workflow``)
-    ``graph``    some other embedded JSON
-    ``raw``      an unparsable string, returned as-is
-    ``none``     no workflow present
+    ``comfyui``   UI-format graph (dict with ``nodes``)
+    ``comfy_api`` ComfyUI's API-format graph, stored under ``meta.comfy``
+    ``a1111``     A1111 PNG-info wrapper (dict with ``prompt``/``workflow``)
+    ``graph``     some other embedded JSON
+    ``raw``       an unparsable string, returned as-is
+    ``none``      no workflow present
     """
-    workflow = _maybe_json((meta or {}).get("workflow"))
+    # ComfyUI uploads put the graph under "comfy", not "workflow"; checking
+    # "workflow" alone would mean we never save one for ComfyUI images.
+    candidate = (meta or {}).get("workflow")
+    if candidate in (None, "", {}):
+        candidate = (meta or {}).get("comfy")
+
+    workflow = _maybe_json(candidate)
 
     if isinstance(workflow, str):
         return workflow, "raw"
@@ -48,9 +55,44 @@ def parse_workflow(meta):
 
     if isinstance(workflow.get("nodes"), list):
         return workflow, "comfyui"
+    # A1111's wrapper also has a "prompt" dict, but its entries carry "prompt"
+    # text rather than a node "class_type".
+    prompt_map = workflow.get("prompt")
+    if isinstance(prompt_map, dict):
+        entries = [v for v in prompt_map.values() if isinstance(v, dict)]
+        if entries and all("class_type" in v for v in entries):
+            return workflow, "comfy_api"
     if "prompt" in workflow or "workflow" in workflow:
         return workflow, "a1111"
     return workflow, "graph"
+
+
+
+def comfy_api_prompts(workflow):
+    """Extract text inputs from an API-format ComfyUI graph."""
+    positive = None
+    negative = None
+    fallback = []
+
+    for node in (workflow.get("prompt") or {}).values():
+        if not isinstance(node, dict):
+            continue
+        if node.get("class_type") not in ("CLIPTextEncode", "TextEncodeQwenImageEdit",
+                                          "BNK_CLIPTextEncoder", "CLIPTextEncodeSDXL"):
+            continue
+        text = (node.get("inputs") or {}).get("text")
+        if not isinstance(text, str) or not text.strip():
+            continue
+        # The negative side is whatever feeds the sampler's negative input, which
+        # the API format does not label, so treat the second text as negative.
+        fallback.append(text)
+
+    if fallback:
+        positive = fallback[0]
+    if len(fallback) > 1:
+        negative = fallback[1]
+    return positive, negative
+
 
 
 def comfyui_prompts(workflow, kind):
@@ -112,9 +154,13 @@ def parse_image(record):
 
     if not prompt and kind == "a1111" and workflow:
         prompt = _a1111_prompt(workflow)
+    if not prompt and kind == "comfy_api" and workflow:
+        prompt, wf_negative = comfy_api_prompts(workflow)
+        negative = negative or wf_negative
     if not prompt:
         prompt, wf_negative = comfyui_prompts(workflow, kind)
         negative = negative or wf_negative
+
 
     source_id = record.get("id")
     hash_prefix = _safe_name(record.get("hash"))

@@ -13,12 +13,49 @@ from .meta import parse_image
 
 
 def output_root():
+    """Where saved originals land.
+
+    Inside ComfyUI, ``folder_paths`` knows the real output directory. The MCP
+    server runs as its own process where that import is unavailable, so the
+    directory is cached into config.json at plugin load time and used as a
+    fallback instead of guessing a path relative to the current directory.
+    """
     try:
         from folder_paths import get_output_directory
 
         return Path(get_output_directory())
     except ImportError:
-        return Path.cwd() / "output"
+        pass
+
+    from .config import load_config
+
+    cached = load_config().get("output_dir")
+    if cached:
+        return Path(cached)
+
+    import os
+
+    env_dir = os.environ.get("CPH_OUTPUT_DIR")
+    if env_dir:
+        return Path(env_dir)
+
+    return Path.cwd() / "output"
+
+
+def cache_output_dir():
+    """Record ComfyUI's output directory so other processes can find it."""
+    try:
+        from folder_paths import get_output_directory
+    except ImportError:
+        return None
+
+    directory = str(get_output_directory())
+    from .config import load_config, write_config_value
+
+    if load_config().get("output_dir") != directory:
+        write_config_value("output_dir", directory)
+    return directory
+
 
 
 def safe_stem(record):

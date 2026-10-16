@@ -74,6 +74,15 @@ def _write_config(data):
     _cache = data
 
 
+def write_config_value(key, value):
+    """Update one key in config.json without disturbing the others."""
+    data = _read_config_file()
+    data[key] = value
+    _write_config(data)
+    return value
+
+
+
 def _read_config_file():
     if not CONFIG_PATH.is_file():
         return {}
@@ -195,6 +204,8 @@ def public_state():
         "proxy_detected": detected_proxy(),
         "proxy_enabled": cfg.get("proxy_enabled", True),
         "proxy_configured": cfg.get("proxy"),
+        "output_dir": cfg.get("output_dir"),
+
         # Other components inside this process (ComfyUI-Manager, ComfyUI's own
         # requests) read these too, and aiohttp honours them via trust_env, so
         # a wrong scheme here breaks them the same way it breaks us.

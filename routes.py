@@ -387,7 +387,12 @@ def register():
     except ImportError:
         return False
 
+    # The MCP server runs outside this process and cannot import folder_paths,
+    # so publish the output directory for it to read.
+    saver.cache_output_dir()
+
     routes = PromptServer.instance.routes
+
     # Order matters: the catch-all /cph/{name} must be registered last so that
     # /cph/config and friends are not swallowed by it.
     routes.get("/cph/")(get_panel_index)
