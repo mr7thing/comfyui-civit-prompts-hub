@@ -74,6 +74,8 @@
         </div>
       </div>
       <div class="row">
+        <button id="btn-fetch" class="primary">拉取</button>
+        <button id="btn-reset">重置（回到第一页）</button>
         <label class="inline"><input id="f-withMeta" type="checkbox" checked /> 带 metadata</label>
         <label class="inline"><input id="f-bm-all" type="checkbox" /> base model 显示全部（含视频/音频/3D）</label>
         <label class="inline"><input id="f-bm-none" type="checkbox" /> 清空 base model</label>
@@ -114,16 +116,13 @@
     <details open>
       <summary>网络</summary>
       <div class="checks">
-        <label><input id="n-proxy-enabled" type="checkbox" /> 启用代理（拉取 Civitai 时走代理）</label>
+        <label><input id="n-browser-mode" type="checkbox" /> 浏览器直连模式（需浏览器开着代理；服务端不参与拉取）</label>
+        <label><input id="n-proxy-enabled" type="checkbox" /> 服务端代理（仅服务端拉取时生效，改动无需重启 ComfyUI）</label>
       </div>
       <div class="grid-form">
         <label class="wide">代理地址（留空 = 自动用系统探测到的）
           <input id="n-proxy-url" type="text" placeholder="http://127.0.0.1:7890" />
         </label>
-      </div>
-      <div class="row">
-        <button id="btn-fetch" class="primary">拉取</button>
-        <button id="btn-reset">重置（回到第一页）</button>
       </div>
       <div class="row">
         <button id="btn-proxy-save">保存代理设置</button>
@@ -138,6 +137,9 @@
         <button id="btn-token-save">把 token 写入配置文件</button>
         <button id="btn-token-clear">清除配置文件里的 token</button>
         <span id="token-detail" class="muted"></span>
+      </div>
+      <div class="row">
+        <span id="mode-detail" class="muted"></span>
       </div>
     </details>
 

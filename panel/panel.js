@@ -2,8 +2,25 @@
 
 const $ = (id) => document.getElementById(id);
 
+const CIVITAI_API = "https://civitai.com/api/v1";
+
+/**
+ * Two ways to reach Civitai:
+ *
+ *   server  - browser -> /cph/* -> plugin route -> outbound proxy -> Civitai.
+ *             Works without any browser proxy, but depends on the server's
+ *             own proxy staying alive.
+ *   browser - browser -> Civitai directly. The API sends
+ *             `access-control-allow-origin: *`, so no CORS problem, and the
+ *             images are just <img> loads. Needs the browser's own proxy on.
+ *
+ * The choice is remembered in localStorage so it survives a page refresh.
+ */
+const MODE_KEY = "cph.fetchMode";
 const state = {
+  mode: localStorage.getItem(MODE_KEY) || "server",
   items: [],          // raw Civitai items, in load order
+
   selected: new Set(), // image ids
   renderedCount: 0,   // cards already in the grid
   parsed: new Map(),   // id -> normalised {prompt, negative, name, ...}
@@ -175,9 +192,103 @@ function clearBanner() {
   $("banner").hidden = true;
 }
 
-function isNetworkFailure(message) {
-  return /Network error|代理|502|timeout|Timeout/i.test(String(message));
+function isBrowserMode() {
+  return state.mode === "browser";
 }
+
+function setMode(mode) {
+  state.mode = mode === "browser" ? "browser" : "server";
+  localStorage.setItem(MODE_KEY, state.mode);
+  renderModeDetail();
+  log(`拉取方式：${isBrowserMode() ? "浏览器直连" : "服务端代理"}`);
+}
+
+function renderModeDetail() {
+  const el = $("mode-detail");
+  if (!el) return;
+  el.textContent = isBrowserMode()
+    ? "当前：浏览器直连。浏览和预览走浏览器自己的代理，服务端只在保存原图和标签 ID 解析时参与。"
+    : "当前：服务端代理。改动代理地址无需重启 ComfyUI，保存后立即生效。";
+}
+
+/** Query-string builder mirroring what the server route does server-side. */
+function filtersToQuery(filters, withMeta) {
+  const params = new URLSearchParams();
+  params.set("limit", String(filters.limit || 50));
+  if (withMeta) params.set("withMeta", "true");
+  for (const key of ["cursor", "username", "postId", "modelId", "modelVersionId",
+                     "browsingLevel", "period", "sort", "type"]) {
+    let value = filters[key];
+    if (value === undefined || value === null) continue;
+    // A whitespace-only field must never reach the wire as a real filter.
+    if (typeof value === "string") {
+      value = value.trim();
+      if (!value) continue;
+    }
+    params.set(key, String(value));
+  }
+  if (filters.baseModels?.length) {
+    params.set("baseModels", filters.baseModels.join(","));
+  }
+  if (filters.tags?.length) params.set("tags", filters.tags.join(","));
+  return params;
+}
+
+/** Fetch a page of images through whichever path is active. */
+async function fetchImagePage(filters, withMeta) {
+  const token = $("f-token").value.trim();
+
+  if (!isBrowserMode()) {
+    return postJSON("/cph/images", { filters, withMeta, token });
+  }
+
+  const params = filtersToQuery(filters, withMeta);
+  const headers = { Accept: "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(`${CIVITAI_API}/images?${params}`, { headers });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(shortApiError(body) || `HTTP ${res.status}`);
+  }
+  return {
+    items: body.items || [],
+    nextCursor: body.metadata?.nextCursor || null,
+  };
+}
+
+/** The API's ZodError payloads are enormous; keep the first useful line. */
+function shortApiError(body) {
+  const raw = body?.error?.message || body?.message || body?.error;
+  if (!raw) return null;
+
+  if (typeof raw === "string") {
+    // The API ships Zod issues as a JSON string inside .message; unwrap it so
+    // the banner shows "Invalid option: expected one of ..." instead of JSON.
+    const trimmed = raw.trim();
+    if (trimmed.startsWith("[")) {
+      try {
+        return shortApiError({ message: JSON.parse(trimmed) });
+      } catch (error) {
+        /* fall through to the raw-text branch */
+      }
+    }
+    return trimmed.split("\n")[0].slice(0, 300);
+  }
+
+  if (Array.isArray(raw)) {
+    const first = raw[0] || {};
+    const values = Array.isArray(first.values) ? `（可选值 ${first.values.length} 个）` : "";
+    return `${first.message || "参数无效"}${values}`.slice(0, 300);
+  }
+
+  return String(raw).slice(0, 300);
+}
+
+function isNetworkFailure(message) {
+  return /Network error|代理|502|timeout|Timeout|Failed to fetch|ERR_/i.test(String(message));
+}
+
 
 
 function log(text, cls) {
@@ -326,11 +437,8 @@ async function fetchPage(reset) {
   delete filters.tagNames;
 
   try {
-    const data = await postJSON("/cph/images", {
-      filters,
-      withMeta: $("f-withMeta").checked,
-      token: $("f-token").value.trim(),
-    });
+    const data = await fetchImagePage(filters, $("f-withMeta").checked);
+
     if (reset) {
       state.items = [];
       state.selected.clear();
@@ -379,7 +487,9 @@ function card(item, index) {
   // The browser cannot reach image.civitai.com on its own here, so images are
   // streamed through the plugin, which uses the outbound proxy and downscales
   // them. Saving originals is a separate, explicit action.
-  img.src = `/cph/image?w=480&url=${encodeURIComponent(item.url)}`;
+  img.src = isBrowserMode()
+    ? item.url
+    : `/cph/image?w=480&url=${encodeURIComponent(item.url)}`;
   img.alt = `civitai ${item.id}`;
   img.addEventListener("error", () => {
     el.classList.add("broken");
@@ -943,6 +1053,14 @@ function init() {
     baseModelPicker.clearSelection();
     event.target.checked = false;
   });
+
+  $("n-browser-mode").addEventListener("change", (event) => {
+    setMode(event.target.checked ? "browser" : "server");
+    fetchPage(true);
+  });
+  $("n-proxy-enabled").checked = true;
+  $("n-browser-mode").checked = isBrowserMode();
+  renderModeDetail();
 
   $("btn-fetch").addEventListener("click", () => fetchPage(true));
   $("banner-retry").addEventListener("click", () => {
