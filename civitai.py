@@ -245,11 +245,14 @@ def _error_message(payload):
 
 
 @asynccontextmanager
-async def get(session, url, params=None, headers=None, proxy=None, retries=3):
+async def get(session, url, params=None, headers=None, proxy=None, retries=5):
     """GET with retries that always surfaces failures as CivitaiError.
 
     Without this, a proxy hiccup escapes as an aiohttp exception and the route
     answers 500 instead of a readable 502.
+
+    The budget is deliberately generous (about 15s) because the local proxy
+    tends to drop out for stretches rather than blinking.
     """
     last = None
     for attempt in range(retries):
@@ -262,7 +265,7 @@ async def get(session, url, params=None, headers=None, proxy=None, retries=3):
         except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
             last = exc
             if attempt < retries - 1:
-                await asyncio.sleep(min(2 ** attempt, 5))
+                await asyncio.sleep(min(2 ** attempt, 8))
 
     raise CivitaiError(f"Network error: {last}")
 

@@ -45,6 +45,22 @@ body {
 .muted { color: var(--muted); font-size: 12px; }
 .muted.warn { color: #e0b45e; }
 
+.banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 12px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--err);
+  border-radius: 5px;
+  background: #2a1d1e;
+  color: #f0c4c3;
+  font-size: 12px;
+}
+.banner[hidden] { display: none; }
+.banner button { flex: 0 0 auto; }
+
 main {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 380px;

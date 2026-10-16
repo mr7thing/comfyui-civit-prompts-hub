@@ -162,6 +162,24 @@ const tagPicker = createMultiSelect($("f-tags"), {
 
 function setStatus(text) { $("status").textContent = text; }
 
+/**
+ * Show a persistent failure banner. The banner stays up until something works
+ * again, so a proxy outage does not look like an empty gallery.
+ */
+function showBanner(message) {
+  $("banner-text").textContent = message;
+  $("banner").hidden = false;
+}
+
+function clearBanner() {
+  $("banner").hidden = true;
+}
+
+function isNetworkFailure(message) {
+  return /Network error|代理|502|timeout|Timeout/i.test(String(message));
+}
+
+
 function log(text, cls) {
   const el = $("run-log");
   const line = document.createElement("div");
@@ -234,7 +252,11 @@ async function initBaseModels() {
     baseModelState.image = data.image || [];
     refreshBaseModelOptions();
   } catch (error) {
-    setStatus(`base model 列表加载失败：${error.message}`);
+    if (isNetworkFailure(error.message)) {
+      showBanner(`base model 列表加载失败：${error.message}`);
+    } else {
+      setStatus(`base model 列表加载失败：${error.message}`);
+    }
   }
 }
 
@@ -254,7 +276,12 @@ async function initTags() {
     tagState.pool = (data.tags || []).map((t) => t.name);
     tagPicker.setOptions(tagState.pool);
   } catch (error) {
-    setStatus(`标签列表加载失败：${error.message}`);
+    if (isNetworkFailure(error.message)) {
+      showBanner(`标签列表加载失败：${error.message}`);
+      setStatus("标签不可用（代理问题）");
+    } else {
+      setStatus(`标签列表加载失败：${error.message}`);
+    }
   }
 }
 
@@ -315,6 +342,7 @@ async function fetchPage(reset) {
     state.cursor = data.nextCursor;
     state.hasMore = Boolean(data.nextCursor);
     appendCards();
+    clearBanner();
     setStatus(state.hasMore ? `还有更多（已加载 ${state.items.length} 张）` : `到底了，共 ${state.items.length} 张`);
   } catch (error) {
     // A dead cursor just means starting over — but only once, otherwise a
@@ -325,8 +353,13 @@ async function fetchPage(reset) {
       state.cursor = null;
       state.hasMore = true;
       setStatus("翻页游标已失效，已重置到第一页");
+    } else if (isNetworkFailure(message)) {
+      // Keep whatever is already on screen instead of blanking the gallery.
+      showBanner(`拉取失败：${message}。已加载的图片仍在下方，可点「重试」再试一次。`);
+      setStatus("代理或网络不可用");
     } else {
-      setStatus(`失败：${message}`);
+      showBanner(`拉取失败：${message}`);
+      setStatus("拉取失败");
     }
   } finally {
     state.loading = false;
@@ -912,6 +945,12 @@ function init() {
   });
 
   $("btn-fetch").addEventListener("click", () => fetchPage(true));
+  $("banner-retry").addEventListener("click", () => {
+    $("banner-retry").disabled = true;
+    fetchPage(!state.items.length).finally(() => {
+      $("banner-retry").disabled = false;
+    });
+  });
   $("btn-more").addEventListener("click", () => {
     state.userScrolled = true;
     fetchPage(false);
