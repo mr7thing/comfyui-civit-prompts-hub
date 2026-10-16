@@ -1023,6 +1023,13 @@ async function initConfig() {
     $("proxy-detected").textContent = data.proxy_detected
       ? `系统探测到：${data.proxy_detected}`
       : "系统未探测到代理";
+
+    // A wrong scheme is the single most common cause of a dead proxy here:
+    // https:// makes aiohttp do TLS with the proxy itself.
+    if (data.proxy_configured && data.proxy_detected &&
+        data.proxy_configured.replace(/^https:\/\//, "") === data.proxy_detected.replace(/^https:\/\//, "")) {
+      $("proxy-detected").textContent += "（注意：配置的地址协议可能不对）";
+    }
     updateProxyBadge(data.proxy);
   } catch (error) {
     /* ignore */

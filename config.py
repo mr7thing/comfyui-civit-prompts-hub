@@ -90,10 +90,8 @@ def save_proxy(enabled, url=None):
     cfg["proxy_enabled"] = bool(enabled)
 
     if url is not None:
-        cleaned = str(url).strip()
+        cleaned = _normalise_proxy_url(str(url).strip())
         if cleaned:
-            if not cleaned.startswith(("http://", "https://", "socks5://")):
-                cleaned = f"http://{cleaned}"
             cfg["proxy"] = cleaned
         else:
             cfg.pop("proxy", None)
@@ -159,6 +157,28 @@ def _windows_proxy():
 def _is_loopback(server):
     host = server.split("//")[-1].split(":")[0]
     return host in ("127.0.0.1", "localhost", "::1", "[::1]")
+
+
+def _normalise_proxy_url(value):
+    """Normalise a user-typed proxy address.
+
+    The scheme matters more than it looks: aiohttp treats ``https://`` as "do a
+    TLS handshake with the proxy itself", so pointing it at a plain HTTP proxy
+    (Clash/xray default) fails with a confusing connect error.
+    """
+    if not value:
+        return ""
+
+    if not value.startswith(("http://", "https://", "socks5://", "socks5h://")):
+        value = f"http://{value}"
+
+    if value.startswith("https://") and _is_loopback(value):
+        # Every local proxy listener we know of speaks plaintext; assume a typo
+        # rather than failing later with a TLS error.
+        value = "http://" + value[len("https://"):]
+
+    return value
+
 
 
 
