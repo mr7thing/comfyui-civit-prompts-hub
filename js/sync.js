@@ -37,7 +37,11 @@ function hashString(value) {
 async function syncWorkflow() {
   try {
     const result = await app.graphToPrompt();
-    const text = JSON.stringify(result);
+    // graphToPrompt() returns { workflow: <UI graph>, output: <API prompt> }.
+    // Only the `output` half is shaped like what POST /prompt expects; sending
+    // the wrapper makes every node look like it has no class_type.
+    const apiPrompt = result.output || {};
+    const text = JSON.stringify(apiPrompt);
     const hash = hashString(text);
     if (hash === lastWorkflowHash) return;
 
@@ -46,10 +50,11 @@ async function syncWorkflow() {
     await api.fetchApi("/cph/workflow", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ workflow: result }),
+      body: JSON.stringify({ workflow: apiPrompt }),
     });
   } catch (error) {
-    // The graph can be mid-mutation; the next tick retries.
+    // The graph can be mid-mutation, or a node may have no output yet; the
+    // next tick retries.
   }
 }
 

@@ -55,7 +55,7 @@ class CivitPromptList:
     RETURN_NAMES = (
         "prompt",
         "negative",
-        "source_id",
+        "source_id (str)",
         "prompts",
         "negatives",
         "source_ids",
@@ -81,7 +81,11 @@ class CivitPromptList:
 
         prompts = [r["prompt"] for r in records]
         negatives = [r["negative"] for r in records]
-        source_ids = [r["id"] for r in records]
+        # Ids arrive as ints from the API. They are declared STRING so they can
+        # feed text inputs such as SaveImage's filename_prefix, so they must be
+        # converted here rather than at the socket.
+        source_ids = ["" if r["id"] is None else str(r["id"]) for r in records]
+
         summary = _summarise(records)
 
         position = _clamp_index(index, len(records))
