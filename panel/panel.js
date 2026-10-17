@@ -206,6 +206,21 @@ function setMode(mode) {
   log(`拉取方式：${isBrowserMode() ? "浏览器直连" : "服务端代理"}`);
 }
 
+/** Used by the per-card author shortcut; shows the row so the value is visible. */
+function setAuthorFilter(username) {
+  $("f-author").value = username;
+  $("author-row").hidden = false;
+  renderAuthorButton();
+  fetchPage(true);
+}
+
+function renderAuthorButton() {
+  const value = $("f-author").value.trim();
+  const button = $("btn-author");
+  button.textContent = value ? `${/^\d+$/.test(value) ? "ID" : "作者"}：${value}` : "未设置";
+  button.classList.toggle("active", Boolean(value));
+}
+
 /** The override box shadows config.json for every request, so say so on the button. */
 function renderTokenButton() {
   const button = $("btn-token-edit");
@@ -425,13 +440,17 @@ function readFilters() {
     period: $("f-period").value,
     limit: Number($("f-limit").value) || 50,
     type: $("f-type").value,
-    userId: $("f-userId").value.trim(),
-    modelId: $("f-modelId").value.trim(),
-    modelVersionId: $("f-modelVersionId").value.trim(),
-    postId: $("f-postId").value.trim(),
-    // browsingLevel is a bitmask: 1 = None, 3 = +Soft, 7 = +Mature, 15 = +X.
-    browsingLevel: Number($("f-level").value) || 1,
   };
+  // One box for either form: digits mean a user id, anything else a username.
+  const author = $("f-author").value.trim();
+  if (author) {
+    if (/^\d+$/.test(author)) f.userId = author;
+    else f.username = author;
+  }
+  if ($("f-modelId").value.trim()) f.modelId = $("f-modelId").value.trim();
+  if ($("f-modelVersionId").value.trim()) f.modelVersionId = $("f-modelVersionId").value.trim();
+  if ($("f-postId").value.trim()) f.postId = $("f-postId").value.trim();
+  f.browsingLevel = Number($("f-level").value) || 1;
   if (baseModels.length) f.baseModels = baseModels;
   if (tagNames.length) f.tagNames = tagNames;
   for (const key of Object.keys(f)) {
@@ -439,6 +458,7 @@ function readFilters() {
   }
   return f;
 }
+
 
 
 async function resolveTagIds(names) {
@@ -637,6 +657,15 @@ function card(item, index) {
   const name = document.createElement("span");
   name.className = "name";
   name.textContent = item.username || "";
+  if (item.username) {
+    name.classList.add("clickable");
+    name.title = "点击以此作者作为筛选条件";
+    name.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setAuthorFilter(item.username);
+      setStatus(`已按作者 ${item.username} 筛选，点「拉取」生效`);
+    });
+  }
   left.appendChild(name);
 
   const right = document.createElement("span");
@@ -1429,6 +1458,7 @@ function init() {
   $("n-proxy-enabled").checked = true;
   $("n-browser-mode").checked = isBrowserMode();
   renderTokenButton();
+  renderAuthorButton();
   renderModeDetail();
 
   for (const id of ["t-inject", "t-positive", "t-negative", "t-save", "t-seed", "t-vary-seed"]) {
@@ -1473,6 +1503,12 @@ function init() {
     renderTokenButton();
   });
   $("f-token").addEventListener("input", renderTokenButton);
+  $("btn-author").addEventListener("click", () => {
+    const row = $("author-row");
+    row.hidden = !row.hidden;
+    if (!row.hidden) $("f-author").focus();
+  });
+  $("f-author").addEventListener("input", renderAuthorButton);
 
   $("btn-token-save").addEventListener("click", () => saveToken("save"));
   $("btn-token-clear").addEventListener("click", () => saveToken("clear"));
