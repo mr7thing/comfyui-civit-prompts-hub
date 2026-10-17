@@ -23,11 +23,11 @@ const state = {
   all: new Map(),     // every item seen this session, keyed by civitai id
 
   selected: new Set(), // image ids
-  renderedCount: 0,   // cards already in the grid
   parsed: new Map(),   // id -> normalised {prompt, negative, name, ...}
   page: 1,             // page currently shown, 1-based
   lastPage: 1,
-  cursors: [null],     // cursors[i] is the cursor that fetches page i+1
+  chunkCursors: [null], // cursors[i] starts the 200-item chunk i
+  chunkCache: new Map(),// chunk index -> items, so paging back costs nothing
   hasMore: true,
   loading: false,
   userScrolled: false,
@@ -607,40 +607,72 @@ async function withResolvedTags(filters) {
   return filters;
 }
 
+/** Items fetched per request while paging, and the cap on a single jump. */
+const CHUNK = 200;
+const MAX_JUMP_PAGES = 300;
+
 /**
- * Load one page and remember the cursor that produced it.
+ * Fetch `count` items starting at `offset`.
  *
- * Civitai only honours `page` for imageId / bare-modelId lookups, so paging
- * through a feed means walking cursors. Skipped pages only advance the cursor
- * chain — nothing is rendered or kept.
+ * Civitai only honours `page` when filtering by modelId without a version, so
+ * the general path walks cursors — but in big chunks. A 200-item chunk covers
+ * four 50-item pages, and every chunk is cached, so paging through it costs one
+ * request per four pages instead of one per page.
  */
-async function loadPage(pageNumber) {
-  if (state.cursors[pageNumber - 1] === undefined) {
-    // Walk forward from the last known cursor until this page's cursor is known.
-    let from = state.cursors.length - 1;
-    while (state.cursors[from] === undefined || from < pageNumber - 1) {
+async function fetchRange(offset, count) {
+  const filters = await withResolvedTags(readFilters());
+  const pageSize = Number($("f-limit").value) || 50;
+
+  // Fast path: modelId without modelVersionId honours ?page= (cap page*limit<=1000).
+  if (filters.modelId && !filters.modelVersionId) {
+    const page = Math.floor(offset / pageSize) + 1;
+    if (page * pageSize <= 1000) {
       const data = await fetchImagePage(
-        await withResolvedTags({ ...readFilters(), cursor: state.cursors[from] }),
+        { ...filters, limit: pageSize, page, cursor: undefined },
         $("f-withMeta").checked
       );
-      const next = data.nextCursor;
-      if (!next) {
-        // No further pages exist; clamp the requested page to the last one.
-        state.hasMore = false;
-        state.cursors.length = from + 1;
-        return { items: data.items, page: from + 1, clamped: true };
-      }
-      state.cursors.push(next);
-      from += 1;
-      state.hasMore = true;
+      return { items: data.items || [], hasMore: Boolean(data.nextCursor) };
     }
   }
-  const cursor = state.cursors[pageNumber - 1];
-  const data = await fetchImagePage(
-    await withResolvedTags({ ...readFilters(), cursor }),
-    $("f-withMeta").checked
-  );
-  return { items: data.items, page: pageNumber, hasMore: Boolean(data.nextCursor), nextCursor: data.nextCursor };
+
+  const chunkIndex = Math.floor(offset / CHUNK);
+  const within = offset % CHUNK;
+
+  let items = state.chunkCache.get(chunkIndex);
+
+  if (!items) {
+    // Make sure we know which cursor starts this chunk, walking one request
+    // per chunk and caching what each of those requests returned.
+    while (state.chunkCursors[chunkIndex] === undefined) {
+      const from = state.chunkCursors.length - 1;
+      const probe = await fetchImagePage(
+        { ...filters, limit: CHUNK, cursor: state.chunkCursors[from] },
+        $("f-withMeta").checked
+      );
+      if (!probe.nextCursor) {
+        state.hasMore = false;
+        state.chunkCache.set(from, probe.items || []);
+        return { items: probe.items || [], hasMore: false, exhausted: true };
+      }
+      state.chunkCache.set(from, probe.items || []);
+      state.chunkCursors.push(probe.nextCursor);
+    }
+
+    // Chunk 0 has a known cursor (null = from the start) but no cached items
+    // yet, so it still has to be fetched.
+    const data = await fetchImagePage(
+      { ...filters, limit: CHUNK, cursor: state.chunkCursors[chunkIndex] },
+      $("f-withMeta").checked
+    );
+    items = data.items || [];
+    state.chunkCache.set(chunkIndex, items);
+    state.hasMore = Boolean(data.nextCursor);
+  }
+
+  return {
+    items: items.slice(within, within + count),
+    hasMore: Boolean(state.chunkCursors[chunkIndex + 1]) || items.length > within + count,
+  };
 }
 
 /** Reset paging and show page 1. */
@@ -651,11 +683,13 @@ async function fetchFirstPage() {
   setStatus("拉取中…");
   try {
     state.page = 1;
-    state.cursors = [null];
+    state.lastPage = 1;
+    state.chunkCursors = [null];
+    state.chunkCache = new Map();
     state.hasMore = true;
     state.all.clear();
-    const { items } = await loadPage(1);
-    showPage(items, 1);
+    const result = await fetchRange(0, pageSize());
+    showPage(result.items, 1);
     clearBanner();
   } catch (error) {
     reportFetchFailure(error, null);
@@ -665,17 +699,29 @@ async function fetchFirstPage() {
   }
 }
 
-/** Show a specific page, walking cursors when it has not been visited yet. */
+function pageSize() {
+  return Math.max(1, Math.min(200, Number($("f-limit").value) || 50));
+}
+
+/** Show a specific page, reusing cached chunks where possible. */
 async function goToPage(pageNumber) {
   const target = Math.max(1, Math.floor(pageNumber) || 1);
   if (state.loading || target === state.page) return;
   if (!state.hasMore && target > state.lastPage) return;
 
+  const jump = Math.abs(target - state.page);
+  if (jump > MAX_JUMP_PAGES) {
+    setStatus(`一次最多跳 ${MAX_JUMP_PAGES} 页（当前要跳 ${jump} 页），请分几次跳`);
+    return;
+  }
+
   state.loading = true;
   setStatus(target > state.page ? `正在翻到第 ${target} 页…` : `正在回到第 ${target} 页…`);
   try {
-    const result = await loadPage(target);
-    showPage(result.items, result.page);
+    const size = pageSize();
+    const result = await fetchRange((target - 1) * size, size);
+    state.hasMore = result.hasMore;
+    showPage(result.items, result.exhausted ? Math.min(target, state.lastPage) : target);
     clearBanner();
   } catch (error) {
     reportFetchFailure(error, state.page);
@@ -702,7 +748,6 @@ function showPage(items, pageNumber) {
   state.items = shown;
   state.page = pageNumber;
   state.lastPage = Math.max(state.lastPage, pageNumber);
-  state.renderedCount = 0;
   render();
 
   const hiddenNote = hidden ? `，已隐藏 ${hidden} 张无 prompt` : "";
@@ -719,7 +764,8 @@ function hasPromptFor(item) {
 function reportFetchFailure(error, currentPage) {
   const message = String(error.message);
   if (/start again|cannot be continued/i.test(message)) {
-    state.cursors = [null];
+    state.chunkCursors = [null];
+    state.chunkCache = new Map();
     state.hasMore = true;
     showBanner(`翻页游标已失效：${message}`);
     setStatus("游标失效，请重新点「拉取」");
