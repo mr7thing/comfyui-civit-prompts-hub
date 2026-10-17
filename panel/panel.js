@@ -1323,31 +1323,49 @@ function stop() {
 }
 
 async function pump() {
-  if (!runner.running) return;
+  if (!runner.running) {
+    // A loaded queue that is idle is a silent stall unless we say why.
+    if (runner.pending.length) setStatus(`有 ${runner.pending.length} 条待发但未开始：${stallReason()}`);
+    return;
+  }
   runner.depth = Math.max(1, Number($("t-depth").value) || 10);
 
-  while (runner.running && runner.pending.length && runner.inflight.size < runner.depth) {
-    const entry = runner.pending.shift();
-    updateCounts();
+  try {
+    while (runner.running && runner.pending.length && runner.inflight.size < runner.depth) {
+      const entry = runner.pending.shift();
+      updateCounts();
 
-    const prompt = buildPrompt(entry, runner.done + runner.failed + runner.inflight.size + 1);
-    try {
-      const res = await fetch("/prompt", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, client_id: "cph-panel" }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
-      runner.inflight.set(data.prompt_id, entry);
-      const preview = (entry.prompt || "").replace(/\s+/g, " ").slice(0, 46);
-      log(`队列#${data.number}  源图#${entry.id}  ${preview}`);
+      let prompt;
+      try {
+        prompt = buildPrompt(entry, runner.done + runner.failed + runner.inflight.size + 1);
+      } catch (error) {
+        runner.failed += 1;
+        log(`构建工作流失败 ${entry.name}: ${error.message}`, "err");
+        continue;
+      }
 
-    } catch (error) {
-      runner.failed += 1;
-      log(`提交失败 ${entry.name}: ${error.message}`, "err");
+      try {
+        const res = await fetch("/prompt", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt, client_id: "cph-panel" }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
+        runner.inflight.set(data.prompt_id, entry);
+        const preview = (entry.prompt || "").replace(/\s+/g, " ").slice(0, 46);
+        log(`队列#${data.number}  源图#${entry.id}  ${preview}`);
+      } catch (error) {
+        runner.failed += 1;
+        log(`提交失败 ${entry.name}: ${error.message}`, "err");
+      }
+      updateCounts();
     }
-    updateCounts();
+  } catch (error) {
+    // One bad item must not kill the submission loop; the pending queue is
+    // persisted, so dying here would freeze the whole batch silently.
+    log(`批量提交中断：${error.message}`, "err");
+    runner.stalled = error.message;
   }
 
   if (runner.running && !runner.pending.length && !runner.inflight.size) {
@@ -1356,6 +1374,13 @@ async function pump() {
     persistQueue();
     log(`全部结束：成功 ${runner.done}，失败 ${runner.failed}`, "ok");
   }
+}
+
+/** Why an idle runner is not submitting, shown in the status line. */
+function stallReason() {
+  if (!state.workflow && !runner.base) return "画布没有同步到工作流，打开 ComfyUI 页面即可";
+  if (!$("t-inject").value) return "注入方式未确定，画布里没有 CivitPromptList 或 CLIPTextEncode";
+  return "点「开始执行」以继续";
 }
 
 async function pollQueue() {
@@ -1370,8 +1395,15 @@ async function pollQueue() {
 
     for (const [promptId, entry] of [...runner.inflight.entries()]) {
       if (active.has(promptId)) continue;
+      // Free the slot before the history lookup: a slow or failing /history
+      // must not hold up the next submission.
       runner.inflight.delete(promptId);
-      const failed = await historyFailed(promptId);
+      let failed = null;
+      try {
+        failed = await historyFailed(promptId);
+      } catch (error) {
+        failed = `状态未知（${error.message}）`;
+      }
       if (failed) {
         runner.failed += 1;
         log(`执行失败 ${entry.name}: ${failed}`, "err");
