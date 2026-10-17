@@ -578,10 +578,21 @@ function card(item, index) {
   });
   el.appendChild(img);
 
-  const idx = document.createElement("div");
-  idx.className = "idx";
+  // Opening the Civitai page is a manual action for the user: the public API
+  // exposes reaction counters read-only, so liking has to happen on the site.
+  const open = document.createElement("a");
+  open.className = "openlink";
+  open.href = `https://civitai.com/images/${item.id}`;
+  open.target = "_blank";
+  open.rel = "noopener noreferrer";
+  open.title = "在 Civitai 打开原页";
+  open.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>';
+  open.addEventListener("click", (event) => event.stopPropagation());
+  el.appendChild(open);
+
+  const idx = document.createElement("span");
+  idx.className = "seq";
   idx.textContent = `#${index + 1}`;
-  el.appendChild(idx);
 
   const badges = document.createElement("div");
   badges.className = "badges";
@@ -594,7 +605,10 @@ function card(item, index) {
   const meta = document.createElement("div");
   meta.className = "meta";
   const left = document.createElement("span");
-  left.textContent = item.username || "";
+  left.appendChild(idx);
+  const name = document.createElement("span");
+  name.textContent = item.username || "";
+  left.appendChild(name);
   const right = document.createElement("span");
   right.className = "tag";
   right.textContent = item.baseModel || "";

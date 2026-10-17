@@ -251,11 +251,6 @@ select[multiple] {
   gap: 4px;
 }
 .card .meta .tag { color: var(--accent); }
-.card .idx {
-  position: absolute; top: 4px; left: 4px;
-  background: rgba(0,0,0,.72); padding: 1px 6px;
-  border-radius: 3px; font-size: 10px;
-}
 .card .badges { position: absolute; top: 4px; right: 4px; display: flex; gap: 3px; }
 .card .badge {
   background: rgba(0,0,0,.72); padding: 1px 5px;
@@ -263,6 +258,41 @@ select[multiple] {
 }
 .card .badge.wf { color: var(--ok); }
 .card .badge.noprompt { color: var(--err); }
+
+/* Opens the image on civitai.com so the user can react to it by hand. */
+.card .openlink {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, .62);
+  border-radius: 4px;
+  color: #cfd6e0;
+  text-decoration: none;
+  opacity: 0;
+  transition: opacity .12s, color .12s;
+  z-index: 2;
+}
+.card:hover .openlink { opacity: 1; }
+.card .openlink:hover { color: var(--accent); }
+.card .openlink svg {
+  width: 11px;
+  height: 11px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.card .seq {
+  color: var(--muted);
+  margin-right: 5px;
+}
 
 .card.broken .meta { border-top: 1px dashed var(--err); }
 .card.broken { border-color: var(--err); }
