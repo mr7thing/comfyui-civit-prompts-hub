@@ -237,20 +237,33 @@ async function checkToken() {
   try {
     const params = new URLSearchParams({ token: $("f-token").value.trim() });
     const res = await fetch(`/cph/whoami?${params}`);
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
+
+    // A transport problem or a missing route says nothing about the token;
+    // reporting those as "invalid" is how a stale backend looked like a bad
+    // token.
+    if (!res.ok) {
+      const text = `检测失败：HTTP ${res.status}${data.error ? " · " + data.error : ""}`;
+      result.textContent = text;
+      log(text + (res.status === 404 ? "（后端尚未重启，这个接口还不存在）" : ""), "err");
+      return;
+    }
+
     if (data.ok) {
       result.textContent =
         `token 有效 · 账号 ${data.username}（${data.status}）` +
         `${data.isMember ? " · 会员" : " · 非会员"}`;
       log(`token 有效：${data.username}`, "ok");
     } else {
-      result.textContent = `token 无效：${data.reason}`;
+      result.textContent = `token 无效：${data.reason || "未知原因"}`;
       log(`token 无效：${data.reason}`, "err");
     }
   } catch (error) {
     result.textContent = `检测失败：${error.message}`;
+    log(`token 检测请求失败：${error.message}`, "err");
   }
 }
+
 
 
 /** Query-string builder mirroring what the server route does server-side. */
