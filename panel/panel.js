@@ -233,31 +233,49 @@ function renderModeDetail() {
 /** Ask the server to validate the token and report which account it belongs to. */
 async function checkToken() {
   const result = $("whoami-result");
+  const typed = $("f-token").value.trim();
   result.textContent = "检测中…";
-  try {
-    const params = new URLSearchParams({ token: $("f-token").value.trim() });
-    const res = await fetch(`/cph/whoami?${params}`);
-    const data = await res.json().catch(() => ({}));
 
-    // A transport problem or a missing route says nothing about the token;
-    // reporting those as "invalid" is how a stale backend looked like a bad
-    // token.
-    if (!res.ok) {
-      const text = `检测失败：HTTP ${res.status}${data.error ? " · " + data.error : ""}`;
+  try {
+    const probe = async (token) => {
+      const query = token ? `?token=${encodeURIComponent(token)}` : "";
+      const res = await fetch(`/cph/whoami${query}`);
+      return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
+    };
+
+    const primary = await probe(typed);
+
+    // A transport problem or a missing route says nothing about the token.
+    if (!primary.ok && primary.status !== 401) {
+      const text = `检测失败：HTTP ${primary.status}${primary.data.error ? " · " + primary.data.error : ""}`;
       result.textContent = text;
-      log(text + (res.status === 404 ? "（后端尚未重启，这个接口还不存在）" : ""), "err");
+      log(text + (primary.status === 404 ? "（后端尚未重启，这个接口还不存在）" : ""), "err");
       return;
     }
 
-    if (data.ok) {
+    if (primary.data.ok) {
       result.textContent =
-        `token 有效 · 账号 ${data.username}（${data.status}）` +
-        `${data.isMember ? " · 会员" : " · 非会员"}`;
-      log(`token 有效：${data.username}`, "ok");
-    } else {
-      result.textContent = `token 无效：${data.reason || "未知原因"}`;
-      log(`token 无效：${data.reason}`, "err");
+        `${typed ? "输入框里的" : "配置文件里的"}token 有效 · 账号 ${primary.data.username}` +
+        `（${primary.data.status}）${primary.data.isMember ? " · 会员" : " · 非会员"}`;
+      log(`token 有效（${typed ? "输入框" : "配置文件"}）：${primary.data.username}`, "ok");
+      return;
     }
+
+    // The typed token failed. Check whether the stored one still works, because
+    // the typed value silently overrides config.json for every request.
+    if (typed) {
+      const stored = await probe("");
+      if (stored.data.ok) {
+        result.textContent =
+          `输入框里的 token 无效，但配置文件里的有效（${stored.data.username}）。` +
+          "当前浏览用的却是输入框那个 —— 清空输入框即可恢复。";
+        log("输入框 token 无效，配置文件 token 有效；浏览正在使用无效的那个", "err");
+        return;
+      }
+    }
+
+    result.textContent = `token 无效：${primary.data.reason || "未知原因"}`;
+    log(`token 无效：${primary.data.reason}`, "err");
   } catch (error) {
     result.textContent = `检测失败：${error.message}`;
     log(`token 检测请求失败：${error.message}`, "err");
