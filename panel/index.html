@@ -80,8 +80,8 @@
       </div>
       <div class="row">
         <button id="btn-fetch" class="primary">拉取</button>
-        <button id="btn-reset">重置（回到第一页）</button>
         <label class="inline"><input id="f-withMeta" type="checkbox" checked /> 带 metadata</label>
+        <label class="inline"><input id="f-only-prompt" type="checkbox" checked /> 不显示没有 prompt 的图</label>
         <label class="inline"><input id="f-bm-all" type="checkbox" /> base model 显示全部（含视频/音频/3D）</label>
         <label class="inline"><input id="f-bm-none" type="checkbox" /> 清空 base model</label>
       </div>
@@ -114,9 +114,16 @@
     </div>
 
     <div id="grid" class="grid"></div>
-    <div class="row load-more">
-      <button id="btn-more">加载更多</button>
-      <span id="sentinel" class="sentinel"></span>
+    <div class="row pager">
+      <button id="pg-first" title="第一页">«</button>
+      <button id="pg-prev">上一页</button>
+      <span class="pager-label">第 <span id="pg-cur">1</span> / <span id="pg-total">1</span> 页</span>
+      <button id="pg-next">下一页</button>
+      <button id="pg-last" title="最后一页">»</button>
+      <span class="pager-jump">
+        跳到第 <input id="pg-input" type="number" min="1" value="1" style="width:64px" /> 页
+        <button id="pg-go">跳转</button>
+      </span>
     </div>
   </section>
 

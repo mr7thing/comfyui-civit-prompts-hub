@@ -394,6 +394,24 @@ select[multiple] {
 }
 .viewer-meta .neg { margin-top: 6px; color: #b9c0cc; }
 
+.pager {
+  justify-content: center;
+  gap: 6px;
+  margin: 12px 0 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.pager-label { color: var(--muted); font-size: 12px; margin: 0 4px; }
+.pager-jump {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.pager button { padding: 3px 10px; }
+
 .load-more { justify-content: center; }
 .sentinel { text-align: center; color: var(--muted); font-size: 11px; }
 

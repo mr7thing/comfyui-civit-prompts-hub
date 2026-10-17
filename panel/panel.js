@@ -19,13 +19,15 @@ const CIVITAI_API = "https://civitai.com/api/v1";
 const MODE_KEY = "cph.fetchMode";
 const state = {
   mode: localStorage.getItem(MODE_KEY) || "server",
-  items: [],          // raw Civitai items, in load order
+  items: [],          // items on the page currently shown
+  all: new Map(),     // every item seen this session, keyed by civitai id
 
   selected: new Set(), // image ids
   renderedCount: 0,   // cards already in the grid
   parsed: new Map(),   // id -> normalised {prompt, negative, name, ...}
-  cursor: null,
-  cursorRetries: 0,
+  page: 1,             // page currently shown, 1-based
+  lastPage: 1,
+  cursors: [null],     // cursors[i] is the cursor that fetches page i+1
   hasMore: true,
   loading: false,
   userScrolled: false,
@@ -211,7 +213,7 @@ function setAuthorFilter(username) {
   $("f-author").value = username;
   $("author-row").hidden = false;
   renderAuthorButton();
-  fetchPage(true);
+  fetchFirstPage();
 }
 
 function renderAuthorButton() {
@@ -592,68 +594,155 @@ function searchTags(query) {
 /* browsing                                                           */
 /* ------------------------------------------------------------------ */
 
-async function fetchPage(reset) {
-  if (state.loading || (!reset && !state.hasMore)) return;
+/** Resolve the tag names into the numeric ids /images insists on. */
+async function withResolvedTags(filters) {
+  if (!filters.tagNames || !filters.tagNames.length) return filters;
+  try {
+    const resolved = await resolveTagIds(filters.tagNames);
+    if (resolved.length) filters.tags = resolved;
+  } catch (error) {
+    throw new Error(`标签解析失败：${error.message}`);
+  }
+  delete filters.tagNames;
+  return filters;
+}
+
+/**
+ * Load one page and remember the cursor that produced it.
+ *
+ * Civitai only honours `page` for imageId / bare-modelId lookups, so paging
+ * through a feed means walking cursors. Skipped pages only advance the cursor
+ * chain — nothing is rendered or kept.
+ */
+async function loadPage(pageNumber) {
+  if (state.cursors[pageNumber - 1] === undefined) {
+    // Walk forward from the last known cursor until this page's cursor is known.
+    let from = state.cursors.length - 1;
+    while (state.cursors[from] === undefined || from < pageNumber - 1) {
+      const data = await fetchImagePage(
+        await withResolvedTags({ ...readFilters(), cursor: state.cursors[from] }),
+        $("f-withMeta").checked
+      );
+      const next = data.nextCursor;
+      if (!next) {
+        // No further pages exist; clamp the requested page to the last one.
+        state.hasMore = false;
+        state.cursors.length = from + 1;
+        return { items: data.items, page: from + 1, clamped: true };
+      }
+      state.cursors.push(next);
+      from += 1;
+      state.hasMore = true;
+    }
+  }
+  const cursor = state.cursors[pageNumber - 1];
+  const data = await fetchImagePage(
+    await withResolvedTags({ ...readFilters(), cursor }),
+    $("f-withMeta").checked
+  );
+  return { items: data.items, page: pageNumber, hasMore: Boolean(data.nextCursor), nextCursor: data.nextCursor };
+}
+
+/** Reset paging and show page 1. */
+async function fetchFirstPage() {
+  if (state.loading) return;
   state.loading = true;
   $("btn-fetch").disabled = true;
   setStatus("拉取中…");
-
-  const filters = readFilters();
-  if (!reset && state.cursor) filters.cursor = state.cursor;
-
-  // Tag names have to become numeric ids before /images will accept them.
-  if (filters.tagNames && filters.tagNames.length) {
-    try {
-      const resolved = await resolveTagIds(filters.tagNames);
-      if (resolved.length) filters.tags = resolved;
-    } catch (error) {
-      setStatus(`标签解析失败：${error.message}`);
-      state.loading = false;
-      $("btn-fetch").disabled = false;
-      return;
-    }
-  }
-  delete filters.tagNames;
-
   try {
-    const data = await fetchImagePage(filters, $("f-withMeta").checked);
-
-    if (reset) {
-      state.items = [];
-      state.selected.clear();
-      state.renderedCount = 0;
-      state.cursorRetries = 0;
-      render();
-    }
-    state.items.push(...data.items);
-    state.cursor = data.nextCursor;
-    state.hasMore = Boolean(data.nextCursor);
-    appendCards();
+    state.page = 1;
+    state.cursors = [null];
+    state.hasMore = true;
+    state.all.clear();
+    const { items } = await loadPage(1);
+    showPage(items, 1);
     clearBanner();
-    setStatus(state.hasMore ? `还有更多（已加载 ${state.items.length} 张）` : `到底了，共 ${state.items.length} 张`);
   } catch (error) {
-    // A dead cursor just means starting over — but only once, otherwise a
-    // broken cursor would restart the page loop forever.
-    const message = String(error.message);
-    if (/start again|cannot be continued/i.test(message) && state.cursorRetries < 1) {
-      state.cursorRetries += 1;
-      state.cursor = null;
-      state.hasMore = true;
-      setStatus("翻页游标已失效，已重置到第一页");
-    } else if (isNetworkFailure(message)) {
-      // Keep whatever is already on screen instead of blanking the gallery.
-      showBanner(`拉取失败：${message}。已加载的图片仍在下方，可点「重试」再试一次。`);
-      setStatus("代理或网络不可用");
-    } else {
-      showBanner(`拉取失败：${message}`);
-      setStatus("拉取失败");
-    }
+    reportFetchFailure(error, null);
   } finally {
     state.loading = false;
     $("btn-fetch").disabled = false;
-    updateSentinel();
   }
 }
+
+/** Show a specific page, walking cursors when it has not been visited yet. */
+async function goToPage(pageNumber) {
+  const target = Math.max(1, Math.floor(pageNumber) || 1);
+  if (state.loading || target === state.page) return;
+  if (!state.hasMore && target > state.lastPage) return;
+
+  state.loading = true;
+  setStatus(target > state.page ? `正在翻到第 ${target} 页…` : `正在回到第 ${target} 页…`);
+  try {
+    const result = await loadPage(target);
+    showPage(result.items, result.page);
+    clearBanner();
+  } catch (error) {
+    reportFetchFailure(error, state.page);
+  } finally {
+    state.loading = false;
+  }
+}
+
+function showPage(items, pageNumber) {
+  const keepPromptOnly = $("f-only-prompt").checked;
+  const shown = [];
+  let hidden = 0;
+
+  for (const item of items || []) {
+    state.all.set(item.id, item);
+    const hasPrompt = hasPromptFor(item);
+    if (keepPromptOnly && !hasPrompt) {
+      hidden += 1;
+      continue;
+    }
+    shown.push(item);
+  }
+
+  state.items = shown;
+  state.page = pageNumber;
+  state.lastPage = Math.max(state.lastPage, pageNumber);
+  state.renderedCount = 0;
+  render();
+
+  const hiddenNote = hidden ? `，已隐藏 ${hidden} 张无 prompt` : "";
+  setStatus(`第 ${pageNumber} 页：显示 ${shown.length} 张${hiddenNote}`);
+}
+
+function hasPromptFor(item) {
+  const meta = item.meta;
+  if (!meta) return false;
+  if (typeof meta.prompt === "string" && meta.prompt.trim()) return true;
+  return Boolean(meta.workflow || meta.comfy);
+}
+
+function reportFetchFailure(error, currentPage) {
+  const message = String(error.message);
+  if (/start again|cannot be continued/i.test(message)) {
+    state.cursors = [null];
+    state.hasMore = true;
+    showBanner(`翻页游标已失效：${message}`);
+    setStatus("游标失效，请重新点「拉取」");
+  } else if (isNetworkFailure(message)) {
+    showBanner(`拉取失败：${message}`);
+    setStatus("代理或网络不可用");
+  } else {
+    showBanner(`拉取失败：${message}`);
+    setStatus("拉取失败");
+  }
+  if (currentPage) setStatus(`停留在第 ${currentPage} 页`);
+}
+
+function updatePager() {
+  $("pg-cur").textContent = String(state.page);
+  $("pg-total").textContent = String(state.hasMore ? state.lastPage + (state.hasMore ? 1 : 0) : state.lastPage);
+  $("pg-prev").disabled = state.page <= 1;
+  $("pg-first").disabled = state.page <= 1;
+  $("pg-next").disabled = !state.hasMore;
+  $("pg-last").disabled = !state.hasMore;
+  if (document.activeElement !== $("pg-input")) $("pg-input").value = String(state.page);
+}
+
 
 function card(item, index) {
   const el = document.createElement("div");
@@ -752,21 +841,9 @@ function render() {
   const grid = $("grid");
   grid.textContent = "";
   state.items.forEach((item, index) => grid.appendChild(card(item, index)));
-  $("count").textContent = `已加载 ${state.items.length} 张`;
+  $("count").textContent = `第 ${state.page} 页显示 ${state.items.length} 张`;
   updateSelectedCount();
-  updateSentinel();
-}
-
-/** Append only the new cards instead of rebuilding the whole grid. */
-function appendCards() {
-  const grid = $("grid");
-  for (let index = state.renderedCount; index < state.items.length; index++) {
-    grid.appendChild(card(state.items[index], index));
-  }
-  state.renderedCount = state.items.length;
-  $("count").textContent = `已加载 ${state.items.length} 张`;
-  updateSelectedCount();
-  updateSentinel();
+  updatePager();
 }
 
 function refreshSelectionStyles() {
@@ -779,17 +856,9 @@ function updateSelectedCount() {
   $("selected-count").textContent = `已选 ${state.selected.size}`;
 }
 
-function updateSentinel() {
-  const sentinel = $("sentinel");
-  sentinel.textContent = state.hasMore
-    ? `向下滚动或点「加载更多」继续（已加载 ${state.items.length} 张）`
-    : "没有更多了";
-  $("btn-more").hidden = !state.hasMore;
-}
-
-
+/** Selection spans pages, so resolve ids through the session-wide map. */
 function selectedItems() {
-  return state.items.filter((item) => state.selected.has(item.id));
+  return [...state.selected].map((id) => state.all.get(id)).filter(Boolean);
 }
 
 /** The server route flattens this to `file`; a direct API call keeps `files`. */
@@ -1102,7 +1171,8 @@ function currentRunId() {
 }
 
 async function parsedItems(ids) {
-  const items = state.items.filter((item) => ids.has(item.id));
+  const items = [...ids].map((id) => state.all.get(id)).filter(Boolean);
+  if (!items.length) return [];
   const data = await postJSON("/cph/parse", { items });
   data.items.forEach((entry) => state.parsed.set(entry.id, entry));
   return data.items;
@@ -1211,7 +1281,8 @@ async function enqueueSelected() {
     return;
   }
 
-  const picked = state.items.filter((item) => ids.has(item.id));
+  // Selection can span pages, so resolve the ids through the session-wide map.
+  const picked = [...ids].map((id) => state.all.get(id)).filter(Boolean);
   let entries = (await parsedItems(ids)).filter((e) => e.prompt.trim());
 
   const withoutPrompt = picked.length - entries.length;
@@ -1542,7 +1613,7 @@ function init() {
 
   $("n-browser-mode").addEventListener("change", (event) => {
     setMode(event.target.checked ? "browser" : "server");
-    fetchPage(true);
+    fetchFirstPage();
   });
   $("n-proxy-enabled").checked = true;
   $("n-browser-mode").checked = isBrowserMode();
@@ -1554,16 +1625,25 @@ function init() {
     $(id).addEventListener("change", renderInjectionPlan);
   }
 
-  $("btn-fetch").addEventListener("click", () => fetchPage(true));
+  $("btn-fetch").addEventListener("click", () => fetchFirstPage());
   $("banner-retry").addEventListener("click", () => {
     $("banner-retry").disabled = true;
-    fetchPage(!state.items.length).finally(() => {
+    const job = state.items.length ? goToPage(state.page) : fetchFirstPage();
+    job.finally(() => {
       $("banner-retry").disabled = false;
     });
   });
-  $("btn-more").addEventListener("click", () => {
-    state.userScrolled = true;
-    fetchPage(false);
+
+  $("pg-first").addEventListener("click", () => goToPage(1));
+  $("pg-prev").addEventListener("click", () => goToPage(state.page - 1));
+  $("pg-next").addEventListener("click", () => goToPage(state.page + 1));
+  $("pg-last").addEventListener("click", () => goToPage(state.lastPage + 1));
+  $("pg-go").addEventListener("click", () => goToPage(Number($("pg-input").value)));
+  $("pg-input").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") goToPage(Number($("pg-input").value));
+  });
+  $("f-only-prompt").addEventListener("change", () => {
+    if (state.items.length) showPage(state.items, state.page);
   });
   $("m-search").addEventListener("click", searchModels);
   $("m-query").addEventListener("keydown", (event) => {
@@ -1572,7 +1652,6 @@ function init() {
   $("m-versions-close").addEventListener("click", () => {
     $("m-versions-wrap").hidden = true;
   });
-  $("btn-reset").addEventListener("click", () => fetchPage(true));
   $("btn-select-all").addEventListener("click", () => {
     state.items.forEach((item) => state.selected.add(item.id));
     refreshSelectionStyles();
@@ -1633,23 +1712,13 @@ function init() {
     }
   });
 
-  const observer = new IntersectionObserver((entries) => {
-    if (!entries.some((e) => e.isIntersecting)) return;
-    // The sentinel sits in view on load; without this guard the panel would
-    // page through results on its own until a cursor broke.
-    if (!state.userScrolled) return;
-    fetchPage(false);
-  }, { rootMargin: "400px" });
-  observer.observe($("sentinel"));
-
-  window.addEventListener("scroll", () => { state.userScrolled = true; }, { passive: true });
-
+  // Paging is explicit now: no scroll-triggered loading.
   initConfig();
   initBaseModels();
   initTags();
   refreshSavedIndex();
   restoreQueue();
-  fetchPage(true);
+  fetchFirstPage();
 
   loadWorkflow(true);
   setInterval(() => loadWorkflow(false), 5000);
