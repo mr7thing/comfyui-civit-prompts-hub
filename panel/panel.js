@@ -481,7 +481,59 @@ const baseModelState = { all: [], image: [] };
 
 
 /* ------------------------------------------------------------------ */
-/* picker data                                                        */
+/* full-size viewer                                                    */
+/* ------------------------------------------------------------------ */
+
+const viewer = { index: -1 };
+
+function fullSizeUrl(item) {
+  // The route accepts a width, so the server can still hand over something
+  // that is smaller than the original; the browser-mode path has no proxy.
+  return isBrowserMode()
+    ? item.url
+    : `/cph/image?w=1600&url=${encodeURIComponent(item.url)}`;
+}
+
+function openViewer(index) {
+  const item = state.items[index];
+  if (!item) return;
+
+  viewer.index = index;
+  $("viewer-img").src = fullSizeUrl(item);
+  $("viewer-img").alt = `civitai ${item.id}`;
+  $("viewer-open").href = `https://civitai.com/images/${item.id}`;
+  $("viewer-title").textContent = `#${index + 1} / ${state.items.length} · ${item.baseModel || ""} · ${item.username || ""}`;
+
+  const prompt = (item.meta && item.meta.prompt) || "";
+  const negative = (item.meta && item.meta.negativePrompt) || "";
+  $("viewer-meta").textContent = "";
+  const line = document.createElement("div");
+  line.textContent = prompt || "（这张图没有记录 prompt）";
+  $("viewer-meta").appendChild(line);
+  if (negative) {
+    const neg = document.createElement("div");
+    neg.className = "neg";
+    neg.textContent = `负向：${negative}`;
+    $("viewer-meta").appendChild(neg);
+  }
+
+  $("viewer").hidden = false;
+}
+
+function closeViewer() {
+  $("viewer").hidden = true;
+  $("viewer-img").removeAttribute("src");
+  viewer.index = -1;
+}
+
+function stepViewer(delta) {
+  if (viewer.index < 0 || !state.items.length) return;
+  const next = (viewer.index + delta + state.items.length) % state.items.length;
+  openViewer(next);
+}
+
+/* ------------------------------------------------------------------ */
+/* base model picker                                                  */
 /* ------------------------------------------------------------------ */
 
 async function initBaseModels() {
@@ -679,6 +731,11 @@ function card(item, index) {
     else state.selected.add(item.id);
     el.classList.toggle("selected");
     updateSelectedCount();
+  });
+  el.title = "单击选择 · 双击看原图";
+  el.addEventListener("dblclick", (event) => {
+    event.stopPropagation();
+    openViewer(index);
   });
 
   return el;
@@ -1503,6 +1560,16 @@ function init() {
     renderTokenButton();
   });
   $("f-token").addEventListener("input", renderTokenButton);
+  $("viewer-close").addEventListener("click", closeViewer);
+  $("viewer-prev").addEventListener("click", () => stepViewer(-1));
+  $("viewer-next").addEventListener("click", () => stepViewer(1));
+  $("viewer-backdrop").addEventListener("click", closeViewer);
+  document.addEventListener("keydown", (event) => {
+    if ($("viewer").hidden) return;
+    if (event.key === "Escape") closeViewer();
+    else if (event.key === "ArrowLeft") stepViewer(-1);
+    else if (event.key === "ArrowRight") stepViewer(1);
+  });
   $("btn-author").addEventListener("click", () => {
     const row = $("author-row");
     row.hidden = !row.hidden;

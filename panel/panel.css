@@ -333,6 +333,67 @@ select[multiple] {
 .card.broken .meta { border-top: 1px dashed var(--err); }
 .card.broken { border-color: var(--err); }
 
+/* full-size viewer, opened by double clicking a card */
+.viewer { position: fixed; inset: 0; z-index: 100; }
+.viewer[hidden] { display: none; }
+.viewer-backdrop {
+  position: absolute; inset: 0;
+  background: rgba(0, 0, 0, .82);
+}
+.viewer-box {
+  position: relative;
+  margin: 3vh auto;
+  max-width: min(1200px, 94vw);
+  max-height: 94vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.viewer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.viewer-title {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.viewer-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.viewer-actions button { padding: 2px 9px; font-size: 14px; line-height: 1.2; }
+.viewer-link { color: var(--accent); text-decoration: none; font-size: 12px; margin-right: 4px; }
+.viewer-link:hover { text-decoration: underline; }
+
+.viewer-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0b0d10;
+}
+.viewer-stage img { max-width: 100%; display: block; }
+
+.viewer-meta {
+  border-top: 1px solid var(--line);
+  padding: 8px 12px;
+  font-size: 11px;
+  color: var(--muted);
+  max-height: 22vh;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+.viewer-meta .neg { margin-top: 6px; color: #b9c0cc; }
+
 .load-more { justify-content: center; }
 .sentinel { text-align: center; color: var(--muted); font-size: 11px; }
 
