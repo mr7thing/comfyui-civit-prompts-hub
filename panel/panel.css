@@ -130,6 +130,7 @@ button:hover:not(:disabled) { border-color: var(--accent); }
 button:disabled { opacity: .45; cursor: not-allowed; }
 button.primary { background: #1d4b80; border-color: #2b6cb0; }
 button.primary:hover:not(:disabled) { background: #245a9c; }
+button.active { border-color: var(--accent); color: var(--accent); }
 
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
 .checks { display: flex; flex-direction: column; gap: 5px; margin: 6px 0; }

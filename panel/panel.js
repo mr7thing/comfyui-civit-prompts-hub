@@ -206,6 +206,14 @@ function setMode(mode) {
   log(`拉取方式：${isBrowserMode() ? "浏览器直连" : "服务端代理"}`);
 }
 
+/** The override box shadows config.json for every request, so say so on the button. */
+function renderTokenButton() {
+  const button = $("btn-token-edit");
+  const typed = $("f-token").value.trim();
+  button.textContent = typed ? "临时 token（生效中）…" : "临时 token…";
+  button.classList.toggle("active", Boolean(typed));
+}
+
 function renderModeDetail() {
   const el = $("mode-detail");
   if (!el) return;
@@ -219,7 +227,7 @@ function renderModeDetail() {
 
   const info = state.config || {};
   if (info.has_token) {
-    bits.push(`token：已配置（${info.token_source === "env" ? "环境变量" : "config.json"}）`);
+    bits.push(`token：${$("f-token").value.trim() ? "临时输入框" : "config.json"}（${info.token_source === "env" ? "环境变量优先" : "文件"}）`);
   } else {
     bits.push("token：未配置，按匿名公开等级浏览");
   }
@@ -417,7 +425,7 @@ function readFilters() {
     period: $("f-period").value,
     limit: Number($("f-limit").value) || 50,
     type: $("f-type").value,
-    username: $("f-username").value.trim(),
+    userId: $("f-userId").value.trim(),
     modelId: $("f-modelId").value.trim(),
     modelVersionId: $("f-modelVersionId").value.trim(),
     postId: $("f-postId").value.trim(),
@@ -1394,6 +1402,7 @@ async function saveToken(action) {
       : "配置文件里没有 token";
     if (action === "save") {
       $("f-token").value = "";
+      renderTokenButton();
       log("token 已写入配置文件", "ok");
       setStatus("token 已保存");
     } else {
@@ -1419,6 +1428,7 @@ function init() {
   });
   $("n-proxy-enabled").checked = true;
   $("n-browser-mode").checked = isBrowserMode();
+  renderTokenButton();
   renderModeDetail();
 
   for (const id of ["t-inject", "t-positive", "t-negative", "t-save", "t-seed", "t-vary-seed"]) {
@@ -1456,6 +1466,13 @@ function init() {
   $("btn-save").addEventListener("click", saveSelection);
   $("btn-proxy-save").addEventListener("click", saveProxySettings);
   $("btn-whoami").addEventListener("click", checkToken);
+  $("btn-token-edit").addEventListener("click", () => {
+    const row = $("token-row");
+    row.hidden = !row.hidden;
+    if (!row.hidden) $("f-token").focus();
+    renderTokenButton();
+  });
+  $("f-token").addEventListener("input", renderTokenButton);
 
   $("btn-token-save").addEventListener("click", () => saveToken("save"));
   $("btn-token-clear").addEventListener("click", () => saveToken("clear"));

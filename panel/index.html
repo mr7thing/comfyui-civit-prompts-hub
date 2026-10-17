@@ -46,8 +46,8 @@
         <label>type
           <select id="f-type"><option>image</option><option>video</option></select>
         </label>
-        <label>username
-          <input id="f-username" type="text" placeholder="留空 = 全部" />
+        <label>userId
+          <input id="f-userId" type="number" placeholder="作者的数字 ID，可选" />
         </label>
         <label>modelId
           <input id="f-modelId" type="number" placeholder="可用下方搜索自动填入" />
@@ -136,14 +136,15 @@
         <button id="btn-proxy-save">保存代理设置</button>
         <span id="proxy-detected" class="muted"></span>
       </div>
-      <div class="grid-form">
-        <label class="half">token（留空则用配置文件里的；填了会覆盖它）
-          <input id="f-token" type="password" placeholder="留空 = 用 config.json 里的 token" autocomplete="off" />
+      <div class="grid-form token-row" id="token-row" hidden>
+        <label class="half">临时 token（只在本次会话生效，覆盖配置文件里的）
+          <input id="f-token" type="password" placeholder="粘贴 Civitai API token" autocomplete="off" />
         </label>
       </div>
       <div class="row">
         <button id="btn-token-save">把 token 写入配置文件</button>
         <button id="btn-token-clear">清除配置文件里的 token</button>
+        <button id="btn-token-edit">临时 token…</button>
         <span id="token-detail" class="muted"></span>
       </div>
       <div class="row">
