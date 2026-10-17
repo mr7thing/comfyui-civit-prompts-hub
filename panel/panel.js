@@ -578,6 +578,11 @@ function card(item, index) {
   });
   el.appendChild(img);
 
+  const idx = document.createElement("div");
+  idx.className = "idx";
+  idx.textContent = `#${index + 1}`;
+  el.appendChild(idx);
+
   // Opening the Civitai page is a manual action for the user: the public API
   // exposes reaction counters read-only, so liking has to happen on the site.
   const open = document.createElement("a");
@@ -590,25 +595,24 @@ function card(item, index) {
   open.addEventListener("click", (event) => event.stopPropagation());
   el.appendChild(open);
 
-  const idx = document.createElement("span");
-  idx.className = "seq";
-  idx.textContent = `#${index + 1}`;
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  const left = document.createElement("span");
+  left.className = "who";
 
-  const badges = document.createElement("div");
+  const badges = document.createElement("span");
   badges.className = "badges";
   const hasPrompt = Boolean((item.meta && item.meta.prompt) || (item.meta && item.meta.workflow));
   if (hasPrompt) badges.appendChild(badge("wf", "prompt"));
   else badges.appendChild(badge("noprompt", "no prompt"));
   if (item.nsfwLevel && item.nsfwLevel !== "None") badges.appendChild(badge("", item.nsfwLevel));
-  el.appendChild(badges);
+  left.appendChild(badges);
 
-  const meta = document.createElement("div");
-  meta.className = "meta";
-  const left = document.createElement("span");
-  left.appendChild(idx);
   const name = document.createElement("span");
+  name.className = "name";
   name.textContent = item.username || "";
   left.appendChild(name);
+
   const right = document.createElement("span");
   right.className = "tag";
   right.textContent = item.baseModel || "";

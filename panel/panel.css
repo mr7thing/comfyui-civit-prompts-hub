@@ -248,10 +248,26 @@ select[multiple] {
   color: var(--muted);
   display: flex;
   justify-content: space-between;
+  align-items: center;
   gap: 4px;
 }
-.card .meta .tag { color: var(--accent); }
-.card .badges { position: absolute; top: 4px; right: 4px; display: flex; gap: 3px; }
+.card .meta .who {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.card .meta .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card .meta .tag {
+  color: var(--accent);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.card .badges { display: flex; gap: 3px; flex: 0 0 auto; }
 .card .badge {
   background: rgba(0,0,0,.72); padding: 1px 5px;
   border-radius: 3px; font-size: 9px; color: var(--muted);
@@ -262,8 +278,8 @@ select[multiple] {
 /* Opens the image on civitai.com so the user can react to it by hand. */
 .card .openlink {
   position: absolute;
-  top: 5px;
-  left: 5px;
+  top: 4px;
+  right: 4px;
   width: 18px;
   height: 18px;
   display: flex;
@@ -289,9 +305,10 @@ select[multiple] {
   stroke-linejoin: round;
 }
 
-.card .seq {
-  color: var(--muted);
-  margin-right: 5px;
+.card .idx {
+  position: absolute; top: 4px; left: 4px;
+  background: rgba(0,0,0,.72); padding: 1px 6px;
+  border-radius: 3px; font-size: 10px; z-index: 2;
 }
 
 .card.broken .meta { border-top: 1px dashed var(--err); }
