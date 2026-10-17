@@ -1581,11 +1581,13 @@ async function initConfig() {
       ? `系统探测到：${data.proxy_detected}`
       : "系统未探测到代理";
 
-    // A wrong scheme is the single most common cause of a dead proxy here:
-    // https:// makes aiohttp do TLS with the proxy itself.
+    // Only complain when the schemes actually differ; matching addresses are
+    // fine and warning about them was a false positive.
+    const schemeOf = (url) => String(url || "").split(":")[0].toLowerCase();
     if (data.proxy_configured && data.proxy_detected &&
-        data.proxy_configured.replace(/^https:\/\//, "") === data.proxy_detected.replace(/^https:\/\//, "")) {
-      $("proxy-detected").textContent += "（注意：配置的地址协议可能不对）";
+        data.proxy_configured !== data.proxy_detected &&
+        schemeOf(data.proxy_configured) !== schemeOf(data.proxy_detected)) {
+      $("proxy-detected").textContent += "（注意：协议不同，https:// 连本地代理会失败）";
     }
 
     const env = data.env_proxies || {};
