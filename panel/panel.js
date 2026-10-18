@@ -1063,7 +1063,6 @@ async function loadWorkflow(force) {
     state.workflow = data.workflow;
     state.workflowAge = data.age;
     populateNodePickers();
-    renderWorkflowLock();
   } catch (error) {
     /* transient */
   }
@@ -1216,6 +1215,18 @@ function currentRunId() {
   return runner.runId;
 }
 
+/** Reload the "already saved" index after a save, so a later run skips them. */
+async function refreshSavedIndex() {
+  try {
+    const res = await fetch("/cph/saved");
+    const data = await res.json();
+    state.saved = new Map(Object.entries(data.items || {}));
+    $("t-saved-count").textContent = `${data.count || 0} 条`;
+  } catch (error) {
+    $("t-saved-count").textContent = "读取失败";
+  }
+}
+
 async function parsedItems(ids) {
   const items = [...ids].map((id) => state.all.get(id)).filter(Boolean);
   if (!items.length) return [];
@@ -1224,121 +1235,47 @@ async function parsedItems(ids) {
   return data.items;
 }
 
-function buildPrompt(entry, index) {
-  // The batch runs against a frozen copy of the workflow, so switching the
-  // canvas mid-run cannot change the graph halfway through.
-  const base = runner.base || state.workflow;
-  const prompt = JSON.parse(JSON.stringify(base));
-  const mode = $("t-inject").value;
-
-  if (mode === "cph") {
-    // Feeding the plugin node keeps the workflow's own switches intact: when
-    // the refine switch is on, the prompt still goes through the enhancer.
-    const nodeId = firstNodeOfType(prompt, "CivitPromptList");
-    if (nodeId) {
-      prompt[nodeId].inputs.selection_json = JSON.stringify([civitaiItemFor(entry)]);
-      prompt[nodeId].inputs.index = 0;
-    }
-  } else if (mode === "clip") {
-    const positiveId = $("t-positive").value;
-    const negativeId = $("t-negative").value;
-    if (positiveId && prompt[positiveId]) prompt[positiveId].inputs.text = entry.prompt || "";
-    if (negativeId && prompt[negativeId]) {
-      const inputs = prompt[negativeId].inputs || {};
-      // ConditioningZeroOut has no text input; the negative prompt has nowhere
-      // to go there, so only fill nodes that actually take text.
-      if ("text" in inputs) inputs.text = entry.negative || "";
-    }
-  }
-
-  // A fixed seed plus a fixed prompt produces byte-identical images, so every
-  // queued item gets its own seed when the workflow exposes one.
-  const seedId = $("t-seed").value;
-  if (seedId && $("t-vary-seed").checked && prompt[seedId]) {
-    const key = Object.keys(prompt[seedId].inputs || {}).find(
-      (k) => SEED_KEYS.includes(k) && typeof prompt[seedId].inputs[k] === "number"
-    );
-    if (key) prompt[seedId].inputs[key] = (Date.now() % 2147483647) + index * 7919;
-  }
-
-  const saveId = $("t-save").value;
-  if (saveId && prompt[saveId]) {
-    const current = prompt[saveId].inputs?.filename_prefix;
-    // A wired prefix already points at the plugin's source id; overwriting it
-    // would break the link back to the Civitai image.
-    if (!isLink(current)) {
-      const prefix = $("t-prefix").value.trim() || "cph_runs";
-      prompt[saveId].inputs.filename_prefix =
-        `${prefix}/${currentRunId()}/${entry.name}_${String(index).padStart(4, "0")}`;
-    }
-  }
-  return prompt;
-}
-
-/** The plugin node parses this back into prompt / negative / source id. */
-function civitaiItemFor(entry) {
+/** Options handed to the server-side runner. */
+function batchOptions() {
   return {
-    id: entry.id ?? 0,
-    hash: "",
-    meta: { prompt: entry.prompt || "", negativePrompt: entry.negative || "" },
+    inject: $("t-inject").value,
+    positiveNode: $("t-positive").value,
+    negativeNode: $("t-negative").value,
+    saveNode: $("t-save").value,
+    seedNode: $("t-seed").value,
+    varySeed: $("t-vary-seed").checked,
+    prefix: $("t-prefix").value.trim() || "cph_runs",
+    depth: Math.max(1, Number($("t-depth").value) || 10),
   };
 }
 
-
-function lockWorkflow() {
-  if (!state.workflow) return false;
-  runner.base = JSON.parse(JSON.stringify(state.workflow));
-  runner.baseLockedAt = new Date();
-  renderWorkflowLock();
-  return true;
-}
-
-function renderWorkflowLock() {
-  const el = $("t-base");
-  if (!el) return;
-
-  if (!runner.base) {
-    el.textContent = "基础工作流：未锁定（开始执行时自动锁定当前画布）";
-    return;
-  }
-
-  const drifted =
-    !runner.running && state.workflow &&
-    JSON.stringify(state.workflow) !== JSON.stringify(runner.base);
-
-  if (drifted) {
-    el.textContent = "⚠ 画布已改动，锁定版本仍是上一次那份（下次开始执行时会自动重新锁定）";
-    el.className = "muted warn";
-    return;
-  }
-
-  const nodes = Object.keys(runner.base).length;
-  const at = runner.baseLockedAt.toLocaleTimeString();
-  el.className = "muted";
-  el.textContent = `基础工作流：已锁定 ${nodes} 个节点 @ ${at}${runner.running ? "（本批固定使用）" : ""}`;
-}
-
+/** Send the selection to the backend; it owns the pacing from here. */
 async function enqueueSelected() {
   const ids = new Set(state.selected);
+  const snapshot = await fetch("/cph/batch/state").then((r) => r.json()).catch(() => null);
+
   if (!ids.size) {
-    // With nothing selected, this button still runs what is already staged.
-    if (runner.pending.length && !runner.running) { start(); return; }
-    setStatus("没有选中任何图");
+    // With nothing selected the button resumes a queue that is only loaded.
+    if (snapshot && snapshot.pending) {
+      await postJSON("/cph/batch/start", { entries: [], options: batchOptions() }).catch(() => {});
+      await refreshBatchState();
+    } else {
+      setStatus("没有选中任何图");
+    }
     return;
   }
 
-  // Selection can span pages, so resolve the ids through the session-wide map.
   const picked = [...ids].map((id) => state.all.get(id)).filter(Boolean);
   let entries = (await parsedItems(ids)).filter((e) => e.prompt.trim());
 
   const withoutPrompt = picked.length - entries.length;
   if (withoutPrompt) log(`${withoutPrompt} 条没有 prompt，已跳过`, "err");
 
-  // Appends must not re-run what is already queued or in flight.
   if ($("t-dedupe").checked) {
+    const queued = new Set((snapshot && snapshot.queuedIds) || []);
     const seen = new Set();
     entries = entries.filter((entry) => {
-      if (runner.queued.has(entry.id) || seen.has(entry.id)) return false;
+      if (queued.has(entry.id) || seen.has(entry.id)) return false;
       seen.add(entry.id);
       return true;
     });
@@ -1358,203 +1295,84 @@ async function enqueueSelected() {
     return;
   }
 
-  runner.pending.push(...entries);
-  runner.queued = new Set([...runner.queued, ...entries.map((e) => e.id)]);
-  updateCounts();
-  persistQueue();
-  if (!runner.running) start();
-  setStatus(`已加入待发队列 ${entries.length} 条`);
-}
-
-/** Mirror the pending queue to disk so a closed tab does not lose it. */
-async function persistQueue() {
   try {
-    await fetch("/cph/queue", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pending: runner.pending, queued: [...runner.queued] }),
-    });
+    const target = snapshot && (snapshot.accepting || snapshot.inflight)
+      ? "/cph/batch/add"
+      : "/cph/batch/start";
+    await postJSON(target, { entries, options: batchOptions() });
+    log(`已提交 ${entries.length} 条到后端队列`);
+    setStatus(`后端已接管 ${entries.length} 条`);
+    await refreshBatchState();
   } catch (error) {
-    log(`暂存队列写入失败：${error.message}`, "err");
+    setStatus(`提交失败：${error.message}`);
   }
 }
 
-/** Pick up the queue a previous session left behind. */
-async function restoreQueue() {
+/** Mirror the server-side queue. The browser only displays it. */
+async function refreshBatchState() {
   try {
-    const res = await fetch("/cph/queue");
+    const res = await fetch("/cph/batch/state");
     const data = await res.json();
-    const pending = data.pending || [];
-    if (!pending.length) return;
+    runner.pendingCount = data.pending || 0;
+    runner.inflightCount = data.inflight || 0;
+    runner.done = data.done || 0;
+    runner.failed = data.failed || 0;
 
-    runner.pending.push(...pending);
-    runner.queued = new Set([...(data.queued || []), ...pending.map((e) => e.id)]);
-    pending.forEach((entry) => state.parsed.set(entry.id, entry));
+    $("run-state").textContent = data.accepting
+      ? "运行中"
+      : (data.inflight ? "收尾中" : (data.pending ? "待开始" : "空闲"));
     updateCounts();
-    log(`已恢复上次暂存的 ${pending.length} 条待发队列，点「开始执行」即可继续`, "ok");
-    setStatus(`已恢复 ${pending.length} 条待发队列`);
+    renderBatchLog(data.log || []);
+
+    if (data.lastError) setStatus(`批量执行：${data.lastError}`);
   } catch (error) {
-    log(`暂存队列读取失败：${error.message}`, "err");
+    /* the panel is only a display; a hiccup here must not look like a stall */
   }
 }
 
-/** Reload the "already saved" index after a save, so a later run skips them. */
-async function refreshSavedIndex() {
-  try {
-    const res = await fetch("/cph/saved");
-    const data = await res.json();
-    state.saved = new Map(Object.entries(data.items || {}));
-    $("t-saved-count").textContent = `${data.count || 0} 条`;
-  } catch (error) {
-    $("t-saved-count").textContent = "读取失败";
+let lastLogLine = "";
+
+function renderBatchLog(lines) {
+  const latest = lines.length ? lines[lines.length - 1].text : "";
+  if (latest && latest !== lastLogLine) {
+    lastLogLine = latest;
+    log(latest);
   }
 }
 
-
-function start() {
-  if (runner.running) return;
-  if (!state.workflow) { setStatus("还没有工作流，请先在 ComfyUI 里打开/编辑工作流"); return; }
-
-  const mode = $("t-inject").value;
-  if (!mode) { setStatus("没有可注入 prompt 的节点，请确认工作流里有 CivitPromptList 或 CLIPTextEncode"); return; }
-  if (mode === "clip" && !$("t-positive").value) { setStatus("请选择正向 CLIPTextEncode 节点"); return; }
-
-  // Freeze the current canvas workflow for this whole batch.
-  lockWorkflow();
-
-  runner.running = true;
-  $("run-state").textContent = "运行中";
-  log(`开始：${$("t-plan").textContent}`);
-  pump();
-  runner.pollTimer = setInterval(pollQueue, 1000);
+async function stopBatch() {
+  await postJSON("/cph/batch/stop", {}).catch(() => {});
+  setStatus("已停止追加");
+  await refreshBatchState();
 }
 
-
-function stop() {
-  runner.running = false;
-  $("run-state").textContent = "已停止";
-  clearInterval(runner.pollTimer);
-  updateCounts();
-  renderWorkflowLock();
-  log("已停止追加，进行中的任务会继续跑完");
+async function clearBatch() {
+  await postJSON("/cph/batch/clear", {}).catch(() => {});
+  setStatus("已清空待发");
+  await refreshBatchState();
 }
 
-async function pump() {
-  if (!runner.running) {
-    // A loaded queue that is idle is a silent stall unless we say why.
-    if (runner.pending.length) setStatus(`有 ${runner.pending.length} 条待发但未开始：${stallReason()}`);
-    return;
-  }
-  runner.depth = Math.max(1, Number($("t-depth").value) || 10);
+async function restoreQueue() {
+  const saved = await fetch("/cph/queue").then((r) => r.json()).catch(() => null);
+  const pending = (saved && saved.pending) || [];
+  if (!pending.length) return;
 
   try {
-    while (runner.running && runner.pending.length && runner.inflight.size < runner.depth) {
-      const entry = runner.pending.shift();
-      updateCounts();
-
-      let prompt;
-      try {
-        prompt = buildPrompt(entry, runner.done + runner.failed + runner.inflight.size + 1);
-      } catch (error) {
-        runner.failed += 1;
-        log(`构建工作流失败 ${entry.name}: ${error.message}`, "err");
-        continue;
-      }
-
-      try {
-        const res = await fetch("/prompt", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt, client_id: "cph-panel" }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
-        runner.inflight.set(data.prompt_id, entry);
-        const preview = (entry.prompt || "").replace(/\s+/g, " ").slice(0, 46);
-        log(`队列#${data.number}  源图#${entry.id}  ${preview}`);
-      } catch (error) {
-        runner.failed += 1;
-        log(`提交失败 ${entry.name}: ${error.message}`, "err");
-      }
-      updateCounts();
-    }
+    // autoStart:false parks the batch until the user presses 开始执行.
+    await postJSON("/cph/batch/start", {
+      entries: pending,
+      options: { ...batchOptions(), autoStart: false },
+    });
+    log(`已恢复上次暂存的 ${pending.length} 条待发队列，点「开始执行」即可继续`);
+    await refreshBatchState();
   } catch (error) {
-    // One bad item must not kill the submission loop; the pending queue is
-    // persisted, so dying here would freeze the whole batch silently.
-    log(`批量提交中断：${error.message}`, "err");
-    runner.stalled = error.message;
-  }
-
-  if (runner.running && !runner.pending.length && !runner.inflight.size) {
-    stop();
-    $("run-state").textContent = "完成";
-    persistQueue();
-    log(`全部结束：成功 ${runner.done}，失败 ${runner.failed}`, "ok");
-  }
-}
-
-/** Why an idle runner is not submitting, shown in the status line. */
-function stallReason() {
-  if (!state.workflow && !runner.base) return "画布没有同步到工作流，打开 ComfyUI 页面即可";
-  if (!$("t-inject").value) return "注入方式未确定，画布里没有 CivitPromptList 或 CLIPTextEncode";
-  return "点「开始执行」以继续";
-}
-
-async function pollQueue() {
-  if (!runner.running && !runner.inflight.size) return;
-  try {
-    const res = await fetch("/queue");
-    const data = await res.json();
-    const active = new Set([
-      ...(data.queue_running || []).map((e) => e[1]),
-      ...(data.queue_pending || []).map((e) => e[1]),
-    ]);
-
-    for (const [promptId, entry] of [...runner.inflight.entries()]) {
-      if (active.has(promptId)) continue;
-      // Free the slot before the history lookup: a slow or failing /history
-      // must not hold up the next submission.
-      runner.inflight.delete(promptId);
-      let failed = null;
-      try {
-        failed = await historyFailed(promptId);
-      } catch (error) {
-        failed = `状态未知（${error.message}）`;
-      }
-      if (failed) {
-        runner.failed += 1;
-        log(`执行失败 ${entry.name}: ${failed}`, "err");
-      } else {
-        runner.done += 1;
-        log(`完成 ${entry.name}`, "ok");
-      }
-      updateCounts();
-    }
-  } catch (error) {
-    /* transient */
-  }
-  pump();
-}
-
-async function historyFailed(promptId) {
-  try {
-    const res = await fetch(`/history/${promptId}`);
-    const data = await res.json();
-    const record = data[promptId];
-    const status = record?.status?.status_str;
-    if (status && status !== "success") {
-      const message = record?.status?.messages?.find((m) => m[0] === "execution_error");
-      return (message && (message[1]?.exception_message || message[1])) || status;
-    }
-    return null;
-  } catch (error) {
-    return null;
+    log(`暂存队列恢复失败：${error.message}`, "err");
   }
 }
 
 function updateCounts() {
   $("run-counts").textContent =
-    `待发 ${runner.pending.length} · 进行 ${runner.inflight.size} · 完成 ${runner.done} · 失败 ${runner.failed}`;
+    `待发 ${runner.pendingCount || 0} · 进行 ${runner.inflightCount || 0} · 完成 ${runner.done} · 失败 ${runner.failed}`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1739,26 +1557,8 @@ function init() {
   $("btn-token-save").addEventListener("click", () => saveToken("save"));
   $("btn-token-clear").addEventListener("click", () => saveToken("clear"));
   $("btn-run").addEventListener("click", enqueueSelected);
-  $("btn-stop").addEventListener("click", stop);
-  $("btn-clear-queue").addEventListener("click", () => {
-    const dropped = runner.pending.length;
-    runner.pending = [];
-    // Release their ids too, otherwise they could never be queued again this
-    // session. Anything already submitted stays claimed.
-    runner.queued = new Set([...runner.inflight.values()].map((e) => e.id));
-    updateCounts();
-    persistQueue();
-    if (dropped) log(`已清空待发队列 ${dropped} 条（这些 ID 可以重新添加）`);
-  });
-
-  $("btn-relock").addEventListener("click", () => {
-    if (lockWorkflow()) {
-      renderWorkflowLock();
-      setStatus("已重新锁定当前画布工作流");
-    } else {
-      setStatus("还没有可锁定的工作流");
-    }
-  });
+  $("btn-stop").addEventListener("click", stopBatch);
+  $("btn-clear-queue").addEventListener("click", clearBatch);
 
   // Paging is explicit now: no scroll-triggered loading.
   initConfig();
@@ -1766,6 +1566,10 @@ function init() {
   initTags();
   refreshSavedIndex();
   restoreQueue();
+  refreshBatchState();
+  // Display only. Pacing happens in the backend, so a backgrounded or closed
+  // tab cannot stall the queue; throttling here just makes the mirror coarser.
+  setInterval(refreshBatchState, 2000);
   fetchFirstPage();
 
   loadWorkflow(true);

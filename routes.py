@@ -13,6 +13,7 @@ from pathlib import Path
 from aiohttp import web
 
 from . import civitai, config, meta, saver
+from . import batch
 
 PANEL_DIR = Path(__file__).parent / "panel"
 
@@ -204,6 +205,48 @@ async def post_pending_queue(request):
 async def delete_pending_queue(request):
     config.clear_pending_queue()
     return web.json_response({"cleared": True})
+
+
+async def get_batch_state(request):
+    return web.json_response(batch.runner.snapshot())
+
+
+async def post_batch_start(request):
+    body, bad = await _json_or_error(request)
+    if bad:
+        return bad
+    try:
+        state = await batch.runner.start(
+            body.get("entries") or [],
+            body.get("options") or {},
+            body.get("workflow") or _state.get("workflow"),
+        )
+    except ValueError as exc:
+        return _json_error(str(exc), 400)
+    return web.json_response(state)
+
+
+async def post_batch_add(request):
+    body, bad = await _json_or_error(request)
+    if bad:
+        return bad
+    try:
+        state = await batch.runner.add(body.get("entries") or [])
+    except ValueError as exc:
+        return _json_error(str(exc), 400)
+    return web.json_response(state)
+
+
+async def post_batch_stop(request):
+    return web.json_response(await batch.runner.stop())
+
+
+async def post_batch_clear(request):
+    return web.json_response(await batch.runner.clear())
+
+
+async def post_batch_reset(request):
+    return web.json_response(await batch.runner.reset())
 
 
 async def get_saved(request):
@@ -438,6 +481,13 @@ def register():
     routes.get("/cph/base-models")(get_base_models)
     routes.get("/cph/whoami")(get_whoami)
     routes.get("/cph/saved")(get_saved)
+    routes.get("/cph/batch/state")(get_batch_state)
+    routes.post("/cph/batch/start")(post_batch_start)
+    routes.post("/cph/batch/add")(post_batch_add)
+    routes.post("/cph/batch/stop")(post_batch_stop)
+    routes.post("/cph/batch/clear")(post_batch_clear)
+    routes.post("/cph/batch/reset")(post_batch_reset)
+
     routes.get("/cph/queue")(get_pending_queue)
     routes.post("/cph/queue")(post_pending_queue)
     routes.delete("/cph/queue")(delete_pending_queue)
