@@ -23,6 +23,9 @@ IDLE_INTERVAL = 4.0
 LOG_LIMIT = 200
 
 SEED_KEYS = ("seed", "noise_seed")
+IMAGE_TAIL_TYPES = frozenset({
+    "VAEDecode", "VAEDecodeTiled", "ImageScale", "ImageUpscaleWithModel", "ImageBatch",
+})
 
 
 def _is_link(value):
@@ -32,6 +35,50 @@ def _is_link(value):
         and len(value) == 2
         and str(value[0]).lstrip("-").isdigit()
     )
+
+
+def _looks_like_saver(node):
+    """Custom save nodes are everywhere, so judge on behaviour, not on name."""
+    node_type = node.get("class_type") or ""
+    inputs = node.get("inputs") or {}
+    return (
+        isinstance(inputs.get("filename_prefix"), str)
+        or node_type.startswith("Save")
+        or "Save" in node_type
+        or "Write" in node_type
+    )
+
+
+def find_save_nodes(workflow):
+    """Nodes that write the finished image to disk.
+
+    Walking the graph beats matching class_type "SaveImage", which misses every
+    custom save node: start from the image tail (VAEDecode and friends) and look
+    at whatever consumes it.
+    """
+    entries = list((workflow or {}).items())
+
+    def consumers_of(source_id):
+        found = []
+        for node_id, node in entries:
+            if any(
+                _is_link(value) and str(value[0]) == str(source_id)
+                for value in (node.get("inputs") or {}).values()
+            ):
+                found.append(node_id)
+        return found
+
+    downstream = []
+    for tail_id, tail in entries:
+        if tail.get("class_type") in IMAGE_TAIL_TYPES:
+            for consumer in consumers_of(tail_id):
+                if consumer not in downstream:
+                    downstream.append(consumer)
+
+    savers = [nid for nid in downstream if _looks_like_saver((workflow or {})[nid])]
+    if not savers:
+        savers = [nid for nid, node in entries if _looks_like_saver(node)]
+    return savers
 
 
 
@@ -298,7 +345,10 @@ class BatchRunner:
 
         # Only override a plain text prefix; a wired one already points at the
         # plugin's source id and must not be clobbered.
-        save_node = options.get("saveNode") or _first_node(graph, "SaveImage")
+        save_node = options.get("saveNode")
+        if save_node not in (graph or {}):
+            found = find_save_nodes(graph)
+            save_node = found[0] if found else ""
         if save_node and save_node in graph:
             current = graph[save_node].get("inputs", {}).get("filename_prefix")
             if not _is_link(current):
@@ -306,6 +356,7 @@ class BatchRunner:
                 graph[save_node]["inputs"]["filename_prefix"] = f"{prefix}/{entry.get('name') or entry.get('id')}"
 
         return graph
+
 
 
 runner = BatchRunner()

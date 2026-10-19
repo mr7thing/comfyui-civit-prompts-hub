@@ -1095,6 +1095,71 @@ async function loadWorkflow(force) {
   }
 }
 
+const IMAGE_TAIL_TYPES = new Set([
+  "VAEDecode", "VAEDecodeTiled", "ImageScale", "ImageUpscaleWithModel", "ImageBatch",
+]);
+
+/**
+ * Find the nodes that actually write the finished image to disk.
+ *
+ * Matching on class_type "SaveImage" misses every custom save node, so walk the
+ * graph instead: take the image tail (VAEDecode and friends) and look at what
+ * consumes it. A candidate counts as a saver when it declares a
+ * `filename_prefix` or its class name says Save.
+ */
+function findSaveNodes(workflow) {
+  const entries = Object.entries(workflow || {});
+  const consumersOf = (sourceId) =>
+    entries
+      .filter(([, node]) =>
+        Object.values(node.inputs || {}).some(
+          (value) => isLink(value) && String(value[0]) === String(sourceId)
+        )
+      )
+      .map(([nodeId, node]) => ({ nodeId, node }));
+
+  const tails = entries.filter(([, node]) => IMAGE_TAIL_TYPES.has(node.class_type));
+  const downstream = [];
+  for (const [tailId] of tails) {
+    for (const consumer of consumersOf(tailId)) {
+      if (!downstream.some((d) => d.nodeId === consumer.nodeId)) downstream.push(consumer);
+    }
+  }
+
+  const looksLikeSaver = ({ node }) => {
+    const type = node.class_type || "";
+    const inputs = node.inputs || {};
+    return (
+      typeof inputs.filename_prefix === "string" ||
+      /^Save/.test(type) ||
+      type.includes("Save") ||
+      type.includes("Write")
+    );
+  };
+
+  const savers = downstream.filter(looksLikeSaver).map(({ nodeId, node }) => ({
+    id: nodeId,
+    text: `${node.class_type}${node.inputs?.filename_prefix ? " · " + describeValue(node.inputs.filename_prefix) : ""}`,
+    linked: isLink(node.inputs?.filename_prefix),
+  }));
+
+  // No tail node found (custom pipelines): fall back to any node that both
+  // consumes an image and names an output file.
+  if (!savers.length) {
+    for (const [nodeId, node] of entries) {
+      if (looksLikeSaver({ node })) {
+        savers.push({
+          id: nodeId,
+          text: `${node.class_type}`,
+          linked: isLink(node.inputs?.filename_prefix),
+        });
+      }
+    }
+  }
+
+  return { savers, downstream: downstream.map((d) => ({ id: d.nodeId, text: d.node.class_type })) };
+}
+
 function populateNodePickers() {
   const api = state.workflow || {};
   const clips = [];
@@ -1114,9 +1179,6 @@ function populateNodePickers() {
     if (type === "ConditioningZeroOut" || type === "ConditioningCombine") {
       negatives.push({ id: nodeId, text: `（${type}）` });
     }
-    if (type === "SaveImage") {
-      saves.push({ id: nodeId, text: describeValue(inputs.filename_prefix), linked: isLink(inputs.filename_prefix) });
-    }
     if (SAMPLER_TYPES.has(type)) {
       for (const key of SEED_KEYS) {
         if (typeof inputs[key] === "number") {
@@ -1126,6 +1188,9 @@ function populateNodePickers() {
       }
     }
   }
+
+  const found = findSaveNodes(api);
+  saves.push(...found.savers);
 
   fillSelect("t-positive", clips, 0);
   fillSelect("t-negative", dedupeById(negatives, clips), 0);
@@ -1138,7 +1203,12 @@ function populateNodePickers() {
   renderInjectionPlan();
 
   if (!clips.length && !cph) setStatus("当前工作流里没有 CLIPTextEncode 或 CivitPromptList 节点");
-  else if (!saves.length) log("提示：当前工作流里没有 SaveImage 节点，新图不会落盘", "err");
+  else if (!saves.length) {
+    const tail = found.downstream.length
+      ? `图像链末端只有 ${found.downstream.map((d) => d.text).join("、")}，没有写入文件的节点`
+      : "没有找到图像输出节点";
+    log(`提示：${tail}，新图不会落盘`, "err");
+  }
 }
 
 const SAMPLER_TYPES = new Set([
