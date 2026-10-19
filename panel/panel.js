@@ -51,6 +51,22 @@ const runner = {
   queued: new Set(),   // ids already queued this run, so appends cannot duplicate
 };
 
+/** Fetch with a hard timeout, so a stuck request cannot hang the panel forever. */
+async function fetchWithTimeout(url, options = {}, timeoutMs = 60000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error(`请求超时（${timeoutMs / 1000}s 无响应）`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* compact multi-select with type-to-filter                            */
 /* ------------------------------------------------------------------ */
@@ -264,7 +280,7 @@ async function checkToken() {
   try {
     const probe = async (token) => {
       const query = token ? `?token=${encodeURIComponent(token)}` : "";
-      const res = await fetch(`/cph/whoami${query}`);
+      const res = await fetchWithTimeout(`/cph/whoami${query}`);
       return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
     };
 
@@ -350,7 +366,7 @@ async function civitaiGet(path, params, token) {
   if (used && isBrowserMode()) headers.Authorization = `Bearer ${used}`;
 
   const base = isBrowserMode() ? CIVITAI_API : "/cph";
-  const res = await fetch(`${base}${path}?${search}`, { headers });
+  const res = await fetchWithTimeout(`${base}${path}?${search}`, { headers });
   const body = await res.json().catch(() => null);
   if (!res.ok) throw new Error(shortApiError(body) || `HTTP ${res.status}`);
   return body;
@@ -369,7 +385,7 @@ async function fetchImagePage(filters, withMeta) {
   const headers = { Accept: "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(`${CIVITAI_API}/images?${params}`, { headers });
+  const res = await fetchWithTimeout(`${CIVITAI_API}/images?${params}`, { headers });
   const body = await res.json().catch(() => null);
   if (!res.ok) {
     throw new Error(shortApiError(body) || `HTTP ${res.status}`);
@@ -424,7 +440,7 @@ function log(text, cls) {
 }
 
 async function postJSON(path, body) {
-  const res = await fetch(path, {
+  const res = await fetchWithTimeout(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body || {}),
@@ -525,8 +541,19 @@ function openViewer(index) {
 function closeViewer() {
   $("viewer").hidden = true;
   $("viewer-img").removeAttribute("src");
+  setZoom(false);
   viewer.index = -1;
 }
+
+/** Toggle between fitting the whole image and showing it at 1:1 pixels. */
+function setZoom(zoomed) {
+  const stage = $("viewer-stage");
+  const button = $("viewer-zoom");
+  stage.classList.toggle("zoomed", zoomed);
+  button.classList.toggle("on", zoomed);
+  button.title = zoomed ? "适应窗口（Z）" : "切换 1:1 原始大小（Z）";
+}
+
 
 function stepViewer(delta) {
   if (viewer.index < 0 || !state.items.length) return;
@@ -540,7 +567,7 @@ function stepViewer(delta) {
 
 async function initBaseModels() {
   try {
-    const res = await fetch("/cph/base-models");
+    const res = await fetchWithTimeout("/cph/base-models");
     const data = await res.json();
     baseModelState.all = data.all || [];
     baseModelState.image = data.image || [];
@@ -1056,7 +1083,7 @@ async function saveSelection() {
 
 async function loadWorkflow(force) {
   try {
-    const res = await fetch("/cph/workflow");
+    const res = await fetchWithTimeout("/cph/workflow");
     const data = await res.json();
     if (!data.workflow) { setStatus("画布里还没有可同步的工作流"); return; }
     if (!force && runner.running) return;
@@ -1218,7 +1245,7 @@ function currentRunId() {
 /** Reload the "already saved" index after a save, so a later run skips them. */
 async function refreshSavedIndex() {
   try {
-    const res = await fetch("/cph/saved");
+    const res = await fetchWithTimeout("/cph/saved");
     const data = await res.json();
     state.saved = new Map(Object.entries(data.items || {}));
     $("t-saved-count").textContent = `${data.count || 0} 条`;
@@ -1252,7 +1279,7 @@ function batchOptions() {
 /** Send the selection to the backend; it owns the pacing from here. */
 async function enqueueSelected() {
   const ids = new Set(state.selected);
-  const snapshot = await fetch("/cph/batch/state").then((r) => r.json()).catch(() => null);
+  const snapshot = await fetchWithTimeout("/cph/batch/state").then((r) => r.json()).catch(() => null);
 
   if (!ids.size) {
     // With nothing selected the button resumes a queue that is only loaded.
@@ -1311,7 +1338,7 @@ async function enqueueSelected() {
 /** Mirror the server-side queue. The browser only displays it. */
 async function refreshBatchState() {
   try {
-    const res = await fetch("/cph/batch/state");
+    const res = await fetchWithTimeout("/cph/batch/state");
     const data = await res.json();
     runner.pendingCount = data.pending || 0;
     runner.inflightCount = data.inflight || 0;
@@ -1353,7 +1380,7 @@ async function clearBatch() {
 }
 
 async function restoreQueue() {
-  const saved = await fetch("/cph/queue").then((r) => r.json()).catch(() => null);
+  const saved = await fetchWithTimeout("/cph/queue").then((r) => r.json()).catch(() => null);
   const pending = (saved && saved.pending) || [];
   if (!pending.length) return;
 
@@ -1381,7 +1408,7 @@ function updateCounts() {
 
 async function initConfig() {
   try {
-    const res = await fetch("/cph/config", {
+    const res = await fetchWithTimeout("/cph/config", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
@@ -1538,6 +1565,12 @@ function init() {
   });
   $("f-token").addEventListener("input", renderTokenButton);
   $("viewer-close").addEventListener("click", closeViewer);
+  $("viewer-zoom").addEventListener("click", () => {
+    setZoom(!$("viewer-stage").classList.contains("zoomed"));
+  });
+  $("viewer-img").addEventListener("click", () => {
+    setZoom(!$("viewer-stage").classList.contains("zoomed"));
+  });
   $("viewer-prev").addEventListener("click", () => stepViewer(-1));
   $("viewer-next").addEventListener("click", () => stepViewer(1));
   $("viewer-backdrop").addEventListener("click", closeViewer);
@@ -1546,6 +1579,9 @@ function init() {
     if (event.key === "Escape") closeViewer();
     else if (event.key === "ArrowLeft") stepViewer(-1);
     else if (event.key === "ArrowRight") stepViewer(1);
+    else if (event.key === "z" || event.key === "Z") {
+      setZoom(!$("viewer-stage").classList.contains("zoomed"));
+    }
   });
   $("btn-author").addEventListener("click", () => {
     const row = $("author-row");

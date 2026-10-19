@@ -342,9 +342,9 @@ select[multiple] {
 }
 .viewer-box {
   position: relative;
-  margin: 3vh auto;
-  max-width: min(1200px, 94vw);
-  max-height: 94vh;
+  margin: 2vh auto;
+  width: min(1600px, 97vw);
+  height: 96vh;
   display: flex;
   flex-direction: column;
   background: var(--panel);
@@ -375,13 +375,25 @@ select[multiple] {
 .viewer-stage {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
   background: #0b0d10;
 }
-.viewer-stage img { max-width: 100%; display: block; }
+/* Default: the whole image fits in the window, however tall it is. */
+.viewer-stage img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  display: block;
+}
+/* 1:1 mode: real pixels, scroll to inspect detail. */
+.viewer-stage.zoomed { overflow: auto; align-items: flex-start; justify-content: flex-start; }
+.viewer-stage.zoomed img { max-width: none; max-height: none; }
+.viewer-actions button.on { border-color: var(--accent); color: var(--accent); }
 
 .viewer-meta {
   border-top: 1px solid var(--line);
